@@ -75,6 +75,22 @@ test('an override of a module that does not exist is refused', () => {
   );
 });
 
+// The door the runner opens for a fixture leads to the stand-ins it declared,
+// so a stand-in that *is* the controller turns that door into a way to warm the
+// graph up before the hook is armed — under any name, including one nothing
+// else ever imports.
+for (const [label, replacement] of [['the controller', 'index.js'], ['its composition', 'bridge.js']]) {
+  test(`a stand-in may not be ${label}, whatever it is called`, () => {
+    assert.throws(
+      () => resolveFixtures(
+        fixtures({ 'a-name-nobody-imports': pathToFileURL(path.join(consumerRoot, replacement)).href }),
+        { contractVersion: CONTRACT_VERSION }
+      ),
+      /a stand-in may not be the thing under test/
+    );
+  });
+}
+
 test('a bare specifier is an external package and may be redirected', () => {
   const resolved = resolveFixtures(
     fixtures({ 'some-native-plugin': replacement }),

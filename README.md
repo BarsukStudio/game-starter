@@ -3,10 +3,11 @@
 The versioned platform contract and the starter template shared by Barsuk Studio
 games. Plain ES modules, no build step, no dependencies.
 
-**Status: pre-alpha.** `contract/manifest.js` exists and is canonical; the
-conformance runner, the `platform/` template and the templated build scripts are
-still being cut from Muscle Clicker. Nothing here has been consumed by a second
-game yet, which is exactly why `CONTRACT_VERSION` is `0.1.0` and not `1.0.0`.
+**Status: pre-alpha.** The contract manifest and its conformance suite exist and
+are canonical, and Muscle Clicker runs against them. The `platform/` template and
+the templated build scripts are still being cut from it. Nothing here has been
+consumed by a second game yet, which is exactly why `CONTRACT_VERSION` is `0.1.0`
+and not `1.0.0`: the shape is proven to work, not proven to transfer.
 
 ## The layer this owns
 
@@ -34,7 +35,19 @@ required *result* may not.
 | Path | What it is |
 | --- | --- |
 | `contract/manifest.js` | the canonical method list, capability groups, callback bags and `CONTRACT_VERSION` |
-| `test/manifest.test.js` | the shape rules that keep the manifest from rotting |
+| `contract/runner.mjs` | runs the cases against a consumer's real controller: redirection, per-case isolation, skips |
+| `contract/fixtures-schema.js` | what a consumer must supply, and what it may never substitute |
+| `contract/cases/` | the canonical cases — surface, startup, ads, purchases, lifecycle and links |
+| `contract/plain-data.js` | whether a value is something a game could have written down itself |
+| `fixtures/`, `test/` | miniature consumers and the suite's own tests |
+
+A consumer supplies fixtures — the environment, the SDKs, the external events —
+and the runner imports that consumer's real `createPlatformController()`. It may
+not supply a controller or the module composing one; the schema refuses a fixture
+that tries, however the substitution is dressed up.
+
+A case that does not apply to a consumer is skipped rather than failed: a game
+that sells nothing is not in breach of a purchase contract.
 
 ## Install
 

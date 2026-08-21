@@ -4,9 +4,13 @@
 import { cases as surface } from './surface.mjs';
 import { cases as startup } from './startup.mjs';
 import { cases as ads } from './ads.mjs';
+import { cases as purchases } from './purchases.mjs';
+import { cases as lifecycleAndLinks } from './lifecycle-and-links.mjs';
 
 export const cases = [
   ...surface,
   ...startup,
   ...ads,
+  ...purchases,
+  ...lifecycleAndLinks,
 ];

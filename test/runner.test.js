@@ -36,19 +36,19 @@ const fixtures = (overrides = {}) => ({
     overridden: { setup: () => ({}), overrides: { './env.js': fakeEnv } },
     // A world whose handles the case is supposed to receive.
     'with-controls': {
-      setup: ({ id }) => {
+      setup: ({ name }) => {
         const opened = [];
         return {
           globals: {},
-          controls: { open: (what) => opened.push(`${what}@${id}`), opened: () => opened },
+          controls: { builtFor: name, open: (what) => opened.push(what), opened: () => opened },
         };
       },
       overrides: {},
     },
     'with-globals': {
-      setup: ({ id }) => ({
+      setup: ({ name }) => ({
         globals: {
-          __conformanceProbe: `case-${id}`,
+          __conformanceProbe: `case-${name}`,
           navigator: { userAgent: 'conformance-probe' },
         },
       }),
@@ -118,7 +118,7 @@ test('globals are installed for the case and taken away afterwards', needsHooks,
   );
   assert.deepEqual(failed, []);
   // navigator is read-only on globalThis; an assignment would not have taken.
-  assert.deepEqual(seen, ['case-1', 'conformance-probe']);
+  assert.deepEqual(seen, ['case-reads its globals', 'conformance-probe']);
   assert.equal(globalThis.__conformanceProbe, before, 'a global installed for a case must not outlive it');
   assert.notEqual(globalThis.navigator?.userAgent, 'conformance-probe', 'navigator must be given back');
 });
@@ -194,11 +194,12 @@ test('the controls a setup returns are handed to the case', needsHooks, async ()
       assert.equal(typeof controls.open, 'function', 'the case must receive the controls setup() built');
       controls.open('door');
       received = controls.opened();
+      assert.equal(controls.builtFor, 'uses its controls', 'setup() is told which case it is building for');
     }),
     silent
   );
   assert.deepEqual(failed, []);
-  assert.deepEqual(received, ['door@1'], 'and they must be the ones built for this case');
+  assert.deepEqual(received, ['door'], 'and they must be the ones built for this case');
 });
 
 test('a case whose environment offers no controls still runs', needsHooks, async () => {
@@ -210,4 +211,66 @@ test('a case whose environment offers no controls still runs', needsHooks, async
   );
   assert.deepEqual(failed, []);
   assert.deepEqual(seen, ['object'], 'controls default to an empty object rather than undefined');
+});
+
+// The narrow door a fixture gets instead of the case's own address book.
+//
+// Given the raw token a fixture could import the controller here — before the
+// hook is armed — and hand every later case a graph that was already warm and
+// never redirected. The door serves the stand-ins this environment declared and
+// refuses everything else, so the worst a fixture can reach for is its own fake.
+test('a fixture may import the stand-ins it declared', needsHooks, async () => {
+  let flavour;
+  const { failed } = await runConformance(
+    {
+      ...fixtures(),
+      environments: {
+        gated: {
+          overrides: { './env.js': fakeEnv },
+          async setup({ importOverride }) {
+            flavour = (await importOverride('./env.js')).flavour;
+            return {};
+          },
+        },
+      },
+    },
+    one('needs its fake', 'gated', ({ createController }) => createController().flavourName()),
+    silent
+  );
+  assert.deepEqual(failed, []);
+  assert.equal(flavour, 'fake', 'and it is the instance the case was given, not a second copy');
+});
+
+test('a fixture may not import anything else through that door', needsHooks, async () => {
+  const refused = [];
+  const environment = (specifier) => ({
+    overrides: { './env.js': fakeEnv },
+    async setup({ importOverride }) {
+      await importOverride(specifier).catch((error) => refused.push(error.message));
+      return {};
+    },
+  });
+  for (const specifier of ['./index.js', './bridge.js', 'node:fs']) {
+    // eslint-disable-next-line no-await-in-loop
+    await runConformance(
+      { ...fixtures(), environments: { gated: environment(specifier) } },
+      one('probe', 'gated', () => {}),
+      silent
+    );
+  }
+  assert.equal(refused.length, 3, 'the controller, its composition and any other module are all refused');
+  for (const message of refused) assert.match(message, /may only import the stand-ins it declared/);
+});
+
+// A capability a consumer does not have is not a breach of contract: the suite
+// has to stay usable by a game that sells nothing, or it stops being a contract
+// and becomes a description of the games that already pass it.
+test('a case may step aside instead of failing', needsHooks, async () => {
+  const { passed, failed, skipped } = await runConformance(fixtures(), [
+    { name: 'not applicable', environment: 'plain', run: ({ skip }) => skip('nothing to test here') },
+    { name: 'applicable', environment: 'plain', run: () => {} },
+  ], silent);
+  assert.deepEqual(failed, []);
+  assert.equal(passed, 1);
+  assert.deepEqual(skipped, [{ name: 'not applicable', reason: 'nothing to test here' }]);
 });

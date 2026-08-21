@@ -84,15 +84,29 @@ export function resolveFixtures(fixtures, { contractVersion }) {
     composition.add(locate(specifier, controller));
   }
 
+  // Specifiers in an override map are written relative to the consumer's root,
+  // so they resolve against a file that would sit there.
+  const anchor = path.join(consumerRoot, 'package.json');
+
   const environments = new Map();
   for (const [name, environment] of Object.entries(fixtures.environments ?? {})) {
     const overrides = new Map();
     for (const [target, replacement] of Object.entries(environment.overrides ?? {})) {
       // A bare specifier is an external package: there is nothing of the
       // consumer's own to protect, and redirecting one is the entire point.
+      // Where the replacement *points* matters as much as what it replaces. A
+      // fixture may reach its own stand-ins back through the runner's one door,
+      // and a stand-in that happened to be the controller would let it warm the
+      // graph up before the hook is armed — under any name at all, including one
+      // nothing else imports.
+      const replacementTarget = locate(replacement, anchor);
+      assert.ok(
+        !composition.has(replacementTarget),
+        `${target} is redirected to the controller or the module composing it; a stand-in may not be the thing under test`
+      );
+
       if (target.startsWith('.') || path.isAbsolute(target)) {
-        const located = locate(target, path.join(consumerRoot, 'package.json'));
-        const resolved = realpath(located, `override target ${target}`);
+        const resolved = realpath(locate(target, anchor), `override target ${target}`);
         assert.ok(
           !composition.has(resolved),
           `${target} composes the controller and may not be replaced — the suite must run the real one`
@@ -115,7 +129,12 @@ export function resolveFixtures(fixtures, { contractVersion }) {
       'function',
       `environment ${name} must provide setup()`
     );
-    environments.set(name, { overrides, setup: environment.setup });
+    // Kept under the keys the fixture wrote, too. That is the only vocabulary a
+    // consumer can be asked to use when it wants one of its own fakes back, and
+    // it is a closed list — which is the point: it lets a fixture reach the
+    // stand-in it declared and nothing else.
+    const declared = new Map(Object.entries(environment.overrides ?? {}));
+    environments.set(name, { overrides, declared, setup: environment.setup });
   }
   assert.ok(environments.size, 'at least one environment must be declared');
 

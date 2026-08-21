@@ -32,6 +32,19 @@ import { resolveFixtures } from './fixtures-schema.js';
 
 export const REQUIRED_NODE = '22.15.0';
 
+// A case that does not apply to a consumer is skipped, not failed. The contract
+// covers capabilities a game may legitimately not have — a platform that sells
+// nothing has no store to drive — and forcing it to pass a purchase case would
+// make the suite untransferable to exactly the projects §10 says it must fit.
+const SKIPPED = Symbol('conformance case skipped');
+
+class SkippedCase extends Error {
+  constructor(reason) {
+    super(reason);
+    this[SKIPPED] = true;
+  }
+}
+
 // The ESM cache is per process, while a case id is only unique inside one run.
 // Two runs in one process would otherwise collide on `?__case=1` and the second
 // one would be served the first one's graph — with the first one's overrides,
@@ -100,7 +113,7 @@ function installGlobals(values) {
  * @param {object} fixtures the consumer's fixture module (its default export)
  * @param {object[]} cases the canonical cases to run
  * @param {(line: string) => void} [log]
- * @returns {Promise<{passed: number, failed: {name: string, error: Error}[]}>}
+ * @returns {Promise<{passed: number, failed: {name: string, error: Error}[], skipped: {name: string, reason: string}[]}>}
  */
 export async function runConformance(fixtures, cases, log = console.log) {
   assertRunnableHere();
@@ -147,6 +160,7 @@ export async function runConformance(fixtures, cases, log = console.log) {
 
   const run = ++runs;
   const failed = [];
+  const skipped = [];
   let passed = 0;
   try {
     for (const [index, testCase] of cases.entries()) {
@@ -155,7 +169,26 @@ export async function runConformance(fixtures, cases, log = console.log) {
       // Built before the graph is imported: a platform module reads the
       // environment while it evaluates, so a world assembled afterwards would
       // arrive after the answers were already cached.
-      const world = environment.setup({ id: index + 1 }) ?? {};
+      // A fixture needs its own stand-ins back — a fake store it can only drive
+      // if it holds the same instance the adapter was handed — but it may not
+      // have the case's address book. Given the raw token it could import the
+      // controller here, before the hook is armed, and hand every later case a
+      // graph that was already warm and never redirected.
+      //
+      // So it gets one narrow door instead: the modules this environment itself
+      // declared as overrides, and nothing else.
+      //
+      // Awaited: reaching a fixture means importing it, and an import is async.
+      const importOverride = (specifier) => {
+        const replacement = environment.declared.get(specifier);
+        if (replacement === undefined) {
+          return Promise.reject(new Error(
+            `${specifier} is not overridden by this environment; a fixture may only import the stand-ins it declared`
+          ));
+        }
+        return import(withCase(replacement, id));
+      };
+      const world = (await environment.setup({ name: testCase.name, importOverride })) ?? {};
       const restoreGlobals = installGlobals(world.globals ?? {});
       active = { id, overrides: environment.overrides };
       try {
@@ -176,11 +209,16 @@ export async function runConformance(fixtures, cases, log = console.log) {
         await testCase.run({
           createController: factory,
           controls: world.controls ?? {},
-          caseId: id,
+          skip: (reason) => { throw new SkippedCase(reason); },
         });
         passed += 1;
         log(`  ok   ${testCase.name}`);
       } catch (error) {
+        if (error?.[SKIPPED]) {
+          skipped.push({ name: testCase.name, reason: error.message });
+          log(`  skip ${testCase.name}: ${error.message}`);
+          continue;
+        }
         failed.push({ name: testCase.name, error });
         log(`  FAIL ${testCase.name}: ${error.message}`);
       } finally {
@@ -192,8 +230,9 @@ export async function runConformance(fixtures, cases, log = console.log) {
     hook.deregister();
   }
 
-  log(`contract ${CONTRACT_VERSION}: ${passed}/${cases.length} cases passed`);
-  return { passed, failed };
+  const tail = skipped.length ? `, ${skipped.length} skipped` : '';
+  log(`contract ${CONTRACT_VERSION}: ${passed}/${cases.length - skipped.length} cases passed${tail}`);
+  return { passed, failed, skipped };
 }
 
 // The case id travels as a query parameter, which is enough to defeat the ESM
