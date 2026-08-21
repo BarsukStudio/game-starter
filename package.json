@@ -1,0 +1,27 @@
+{
+  "name": "@barsuk/game-starter",
+  "version": "0.1.0-alpha.1",
+  "description": "The versioned platform contract and starter template shared by Barsuk Studio games",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    "./contract/manifest": "./contract/manifest.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "contract",
+    "template"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BarsukStudio/game-starter.git"
+  },
+  "sideEffects": false
+}
