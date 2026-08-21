@@ -32,12 +32,25 @@ const fixtures = (overrides = {}) => ({
   contractVersion: CONTRACT_VERSION,
   consumerRoot,
   environments: {
-    plain: { globals: () => ({}), overrides: {} },
-    overridden: { globals: () => ({}), overrides: { './env.js': fakeEnv } },
+    plain: { setup: () => ({}), overrides: {} },
+    overridden: { setup: () => ({}), overrides: { './env.js': fakeEnv } },
+    // A world whose handles the case is supposed to receive.
+    'with-controls': {
+      setup: ({ id }) => {
+        const opened = [];
+        return {
+          globals: {},
+          controls: { open: (what) => opened.push(`${what}@${id}`), opened: () => opened },
+        };
+      },
+      overrides: {},
+    },
     'with-globals': {
-      globals: ({ id }) => ({
-        __conformanceProbe: `case-${id}`,
-        navigator: { userAgent: 'conformance-probe' },
+      setup: ({ id }) => ({
+        globals: {
+          __conformanceProbe: `case-${id}`,
+          navigator: { userAgent: 'conformance-probe' },
+        },
       }),
       overrides: {},
     },
@@ -167,4 +180,34 @@ test('the resolve hook is handed back after every run', needsHooks, () => {
   const probe = path.join(here, '..', 'fixtures', 'deregister-probe.cjs');
   const output = execFileSync(process.execPath, [probe], { encoding: 'utf8' });
   assert.match(output, /deregister called: 2/);
+});
+
+// `controls` is the only way a case reaches the outside world without naming an
+// SDK, so a runner that dropped them would leave every ad and purchase case
+// silently driving nothing — and most of those cases assert that something did
+// *not* happen, which is exactly what an inert control surface produces.
+test('the controls a setup returns are handed to the case', needsHooks, async () => {
+  let received;
+  const { failed } = await runConformance(
+    fixtures(),
+    one('uses its controls', 'with-controls', ({ controls }) => {
+      assert.equal(typeof controls.open, 'function', 'the case must receive the controls setup() built');
+      controls.open('door');
+      received = controls.opened();
+    }),
+    silent
+  );
+  assert.deepEqual(failed, []);
+  assert.deepEqual(received, ['door@1'], 'and they must be the ones built for this case');
+});
+
+test('a case whose environment offers no controls still runs', needsHooks, async () => {
+  const seen = [];
+  const { failed } = await runConformance(
+    fixtures(),
+    one('has no controls', 'plain', ({ controls }) => seen.push(typeof controls)),
+    silent
+  );
+  assert.deepEqual(failed, []);
+  assert.deepEqual(seen, ['object'], 'controls default to an empty object rather than undefined');
 });

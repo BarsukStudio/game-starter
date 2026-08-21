@@ -152,7 +152,11 @@ export async function runConformance(fixtures, cases, log = console.log) {
     for (const [index, testCase] of cases.entries()) {
       const environment = resolved.environments.get(testCase.environment);
       const id = `${run}.${index + 1}`;
-      const restoreGlobals = installGlobals(environment.globals({ id: index + 1 }));
+      // Built before the graph is imported: a platform module reads the
+      // environment while it evaluates, so a world assembled afterwards would
+      // arrive after the answers were already cached.
+      const world = environment.setup({ id: index + 1 }) ?? {};
+      const restoreGlobals = installGlobals(world.globals ?? {});
       active = { id, overrides: environment.overrides };
       try {
         // Imported after the globals are in place: a platform module reads the
@@ -165,7 +169,15 @@ export async function runConformance(fixtures, cases, log = console.log) {
           'function',
           `${resolved.controllerExport} must be exported by ${resolved.controller}`
         );
-        await testCase.run({ createController: factory, caseId: id });
+        // `controls` is how a case reaches the outside world without naming an
+        // SDK: it asks for an ad to be presented, and the consumer's fixture
+        // decides which callback of which plugin that is. A case that spoke to
+        // a plugin directly would make this suite a test of that plugin.
+        await testCase.run({
+          createController: factory,
+          controls: world.controls ?? {},
+          caseId: id,
+        });
         passed += 1;
         log(`  ok   ${testCase.name}`);
       } catch (error) {

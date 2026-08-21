@@ -37,13 +37,13 @@ nodeModule.syncBuiltinESMExports();
   const { CONTRACT_VERSION } = await import(path.join(root, 'contract', 'manifest.js'));
   const consumerRoot = path.join(root, 'fixtures', 'stateful');
   const environments = {
-    plain: { globals: () => ({}), overrides: {} },
+    plain: { setup: () => ({}), overrides: {} },
     // Thrown from where the runner has already registered its hook but has not
     // yet entered the per-case try. A case that throws would not do: the runner
     // catches that and turns it into a reported failure, so the loop still ends
     // normally and only the ordinary path gets exercised.
     hostile: {
-      globals: () => {
+      setup: () => {
         throw new Error('deliberate: an environment that cannot be built');
       },
       overrides: {},

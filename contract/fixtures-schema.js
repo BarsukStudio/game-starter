@@ -106,12 +106,16 @@ export function resolveFixtures(fixtures, { contractVersion }) {
         overrides.set(target, replacement);
       }
     }
+    // One factory per case, producing both the world and the handles that drive
+    // it. Separate `globals()` and `controls()` would have to agree with each
+    // other about which case they belong to, through an id passed to both —
+    // exactly the hidden coupling a fixture should not have to maintain.
     assert.equal(
-      typeof environment.globals,
+      typeof environment.setup,
       'function',
-      `environment ${name} must provide globals()`
+      `environment ${name} must provide setup()`
     );
-    environments.set(name, { overrides, globals: environment.globals });
+    environments.set(name, { overrides, setup: environment.setup });
   }
   assert.ok(environments.size, 'at least one environment must be declared');
 

@@ -27,7 +27,7 @@ const fixtures = (overrides = {}, extra = {}) => ({
   contractVersion: CONTRACT_VERSION,
   consumerRoot,
   controllerModule: 'index.js',
-  environments: { probe: { globals: () => ({}), overrides } },
+  environments: { probe: { setup: () => ({}), overrides } },
   ...extra,
 });
 
@@ -124,7 +124,7 @@ for (const suffix of ['?probe=1', '#frag']) {
             controllerModule: 'index.js',
             environments: {
               probe: {
-                globals: () => ({}),
+                setup: () => ({}),
                 overrides: { './bridge.js': pathToFileURL(path.join(root, 'env.js')).href },
               },
             },
@@ -159,7 +159,7 @@ test('a symlinked import path cannot smuggle the bridge past the rule', () => {
           controllerModule: 'index.js',
           environments: {
             probe: {
-              globals: () => ({}),
+              setup: () => ({}),
               overrides: { './bridge.js': pathToFileURL(path.join(root, 'env.js')).href },
             },
           },
