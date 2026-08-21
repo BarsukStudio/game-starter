@@ -10,6 +10,8 @@
   },
   "exports": {
     "./contract/manifest": "./contract/manifest.js",
+    "./contract/runner": "./contract/runner.mjs",
+    "./contract/cases": "./contract/cases/index.mjs",
     "./package.json": "./package.json"
   },
   "files": [
