@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { STORE_KEYS, validateConsumerConfig } from '../template/platform/config.schema.js';
+import { STORE_KEYS, validateConsumerConfig } from '../template/schemas/config.schema.js';
 
 function validConfig() {
   const adUnits = () => ({ banner: 'b', interstitial: 'i', rewarded: 'r' });

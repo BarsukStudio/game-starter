@@ -3,9 +3,12 @@
 The versioned platform contract and the starter template shared by Barsuk Studio
 games. Plain ES modules, no build step, no dependencies.
 
-**Status: pre-alpha.** The contract manifest and its conformance suite exist and
-are canonical, and Muscle Clicker runs against them. The `platform/` template and
-the templated build scripts are still being cut from it. Nothing here has been
+**Status: pre-alpha.** The contract manifest and its conformance suite are
+canonical, and Muscle Clicker runs against them. `template/` carries two trees
+cut from that game — `platform/`, the transport layer a game bundles, and
+`scripts/`, the build, sync and release scripts it runs under Node — plus
+`schemas/`, which states what a consumer's two config files must provide and is
+imported from this package rather than copied. Nothing here has been
 consumed by a second game yet, which is exactly why `CONTRACT_VERSION` is `0.1.0`
 and not `1.0.0`: the shape is proven to work, not proven to transfer.
 

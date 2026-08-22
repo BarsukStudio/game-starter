@@ -12,7 +12,8 @@
     "./contract/manifest": "./contract/manifest.js",
     "./contract/runner": "./contract/runner.mjs",
     "./contract/cases": "./contract/cases/index.mjs",
-    "./template/config-schema": "./template/platform/config.schema.js",
+    "./template/config-schema": "./template/schemas/config.schema.js",
+    "./template/build-config-schema": "./template/schemas/build.config.schema.mjs",
     "./package.json": "./package.json"
   },
   "files": [

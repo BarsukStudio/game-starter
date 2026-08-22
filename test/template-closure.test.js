@@ -15,16 +15,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  CONSUMER_SEAMS,
-  EXTERNAL_PREREQUISITES,
-  FORBIDDEN_RUNTIME_IMPORT,
-  TEMPLATE_ROOT,
-} from '../template/manifest.js';
+import { FORBIDDEN_RUNTIME_IMPORT, TEMPLATE_TREES } from '../template/manifest.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const templateRoot = path.join(here, '..', 'template');
-const platformRoot = path.join(templateRoot, TEMPLATE_ROOT);
+const platformRoot = path.join(templateRoot, 'platform');
+
+// Node builtins are not prerequisites: every consuming game already has them,
+// and listing them would turn the declaration into an inventory of Node.
+const isBuiltin = (specifier) => specifier.startsWith('node:');
 
 // Comments are removed before anything is matched, and that is load-bearing
 // rather than tidiness: prose in this template contains the words `apart from
@@ -41,7 +40,10 @@ function listModules(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) return listModules(full);
-    return entry.isFile() && entry.name.endsWith('.js') ? [full] : [];
+    // Both extensions: the platform tree is `.js` inside a bundler, the script
+    // tree is `.mjs` under plain Node.
+    const isModule = entry.name.endsWith('.js') || entry.name.endsWith('.mjs');
+    return entry.isFile() && isModule ? [full] : [];
   });
 }
 
@@ -87,79 +89,132 @@ function readNamedBindings(source, specifier) {
   return names;
 }
 
+// Every regular-expression literal in a module. Crude on purpose: it only has to
+// separate "this token is what the code matches on" from "this token appears in
+// a message about the code".
+function readRegexLiterals(code) {
+  return code.match(/\/(?:[^/\\\n[]|\\.|\[[^\]\n]*\])+\/[gimsuy]*/g) ?? [];
+}
+
 // Where a relative specifier actually lands, named the way the declaration names
 // it: relative to the template root, so one seam has one name however many
 // different `../` chains reach it.
-function resolveSeamKey(fromFile, specifier) {
+function resolveSeamKey(treeRoot, fromFile, specifier) {
   const resolved = path.resolve(path.dirname(fromFile), specifier);
-  const relative = path.relative(platformRoot, resolved);
+  const relative = path.relative(treeRoot, resolved);
   return relative.startsWith('.') ? relative : `./${relative}`;
 }
 
-const modules = listModules(platformRoot);
-const sources = new Map(modules.map((file) => [file, fs.readFileSync(file, 'utf8')]));
-
-test('the template carries modules to check', () => {
-  // A walk that found nothing would pass every assertion below while proving
-  // nothing at all.
-  assert.ok(modules.length >= 9, `expected the template's modules, found ${modules.length}`);
+// Every tree, read once. A tree that walked to nothing would pass every
+// assertion below while proving nothing at all, so the count is asserted too.
+const trees = Object.entries(TEMPLATE_TREES).map(([name, declaration]) => {
+  const treeRoot = path.join(templateRoot, name);
+  const modules = listModules(treeRoot);
+  return {
+    name,
+    treeRoot,
+    declaration,
+    modules,
+    sources: new Map(modules.map((file) => [file, fs.readFileSync(file, 'utf8')])),
+  };
 });
 
-test('every relative import stays inside the template or is a declared seam', () => {
-  const seen = new Set();
-  for (const [file, source] of sources) {
-    for (const specifier of readImports(source)) {
-      if (!specifier.startsWith('.')) continue;
-      const resolved = path.resolve(path.dirname(file), specifier);
-      if (resolved.startsWith(`${platformRoot}${path.sep}`) && fs.existsSync(resolved)) continue;
-      const key = resolveSeamKey(file, specifier);
-      assert.ok(
-        Object.hasOwn(CONSUMER_SEAMS, key),
-        `${path.relative(templateRoot, file)} imports ${specifier} (${key}), which is neither a template module nor a declared consumer seam`,
-      );
-      seen.add(key);
-    }
-  }
+const allSources = new Map(trees.flatMap((tree) => [...tree.sources]));
+
+test('every tree carries modules to check', () => {
   assert.deepEqual(
-    [...seen].sort(),
-    Object.keys(CONSUMER_SEAMS).sort(),
-    'every declared seam must still be imported, or the declaration is describing a template that no longer exists',
+    trees.map(({ name }) => name).sort(),
+    Object.keys(TEMPLATE_TREES).sort(),
+    'every declared tree must exist on disk',
   );
+  for (const { name, modules } of trees) {
+    assert.ok(modules.length, `the ${name} tree walked to nothing`);
+  }
 });
 
-test('each seam is used through exactly the exports it declares', () => {
-  for (const [seam, declared] of Object.entries(CONSUMER_SEAMS)) {
-    const used = new Set();
+for (const { name, treeRoot, declaration, sources } of trees) {
+  const { seams, prerequisites } = declaration;
+
+  test(`[${name}] every relative import stays inside the tree or is a declared seam`, () => {
+    const seen = new Set();
     for (const [file, source] of sources) {
       for (const specifier of readImports(source)) {
         if (!specifier.startsWith('.')) continue;
-        if (resolveSeamKey(file, specifier) !== seam) continue;
-        const names = readNamedBindings(source, specifier);
-        assert.ok(names, `${seam} is imported as a namespace; its surface cannot be checked`);
-        for (const name of names) used.add(name);
+        const resolved = path.resolve(path.dirname(file), specifier);
+        if (resolved.startsWith(`${treeRoot}${path.sep}`) && fs.existsSync(resolved)) continue;
+        const key = resolveSeamKey(treeRoot, file, specifier);
+        assert.ok(
+          Object.hasOwn(seams, key),
+          `${path.relative(templateRoot, file)} imports ${specifier} (${key}), which is neither a module of this tree nor a declared consumer seam`,
+        );
+        seen.add(key);
       }
     }
-    assert.deepEqual([...used].sort(), [...declared].sort(), `the declared exports of ${seam}`);
-  }
-});
+    assert.deepEqual(
+      [...seen].sort(),
+      Object.keys(seams).sort(),
+      'every declared seam must still be imported, or the declaration is describing a template that no longer exists',
+    );
+  });
 
-test('every bare import is a declared prerequisite, and every prerequisite is imported', () => {
-  const seen = new Set();
-  for (const [file, source] of sources) {
-    for (const specifier of readImports(source)) {
-      if (specifier.startsWith('.')) continue;
-      assert.ok(
-        EXTERNAL_PREREQUISITES.includes(specifier),
-        `${path.relative(templateRoot, file)} imports ${specifier}, which is not a declared prerequisite`,
-      );
-      seen.add(specifier);
+  test(`[${name}] each seam is used through exactly the exports it declares`, () => {
+    for (const [seam, declared] of Object.entries(seams)) {
+      const used = new Set();
+      for (const [file, source] of sources) {
+        for (const specifier of readImports(source)) {
+          if (!specifier.startsWith('.')) continue;
+          if (resolveSeamKey(treeRoot, file, specifier) !== seam) continue;
+          const names = readNamedBindings(source, specifier);
+          assert.ok(names, `${seam} is imported as a namespace; its surface cannot be checked`);
+          for (const name of names) used.add(name);
+        }
+      }
+      assert.deepEqual([...used].sort(), [...declared].sort(), `the declared exports of ${seam}`);
+    }
+  });
+
+  test(`[${name}] every bare import is a declared prerequisite, and every prerequisite is imported`, () => {
+    const seen = new Set();
+    for (const [file, source] of sources) {
+      for (const specifier of readImports(source)) {
+        if (specifier.startsWith('.') || isBuiltin(specifier)) continue;
+        assert.ok(
+          prerequisites.includes(specifier),
+          `${path.relative(templateRoot, file)} imports ${specifier}, which is not a declared prerequisite`,
+        );
+        seen.add(specifier);
+      }
+    }
+    assert.deepEqual(
+      [...seen].sort(),
+      [...prerequisites].sort(),
+      'a prerequisite nobody imports is a dependency a game would install for nothing',
+    );
+  });
+}
+
+test('every declared source dependency is real and still looked for', () => {
+  // The closure above covers imports. These two read consumer *text*, so nothing
+  // resolves and nothing fails at load — the declaration is the only record that
+  // the dependency exists, and it is worth only as much as its agreement with
+  // the code.
+  for (const { name, treeRoot, declaration, sources } of trees) {
+    for (const { reader, needs } of declaration.sourceDependencies ?? []) {
+      const file = path.join(treeRoot, reader);
+      assert.ok(sources.has(file), `[${name}] ${reader} is declared to read consumer text but is not in the tree`);
+      // Inside a pattern, not merely present in the file. Both readers name the
+      // token in an error message too, so "the string appears somewhere" passes
+      // just as well for a reader that has stopped looking for it — which is the
+      // one state this test exists to catch.
+      const patterns = readRegexLiterals(stripComments(sources.get(file)));
+      for (const token of needs) {
+        assert.ok(
+          patterns.some((pattern) => pattern.includes(token)),
+          `[${name}] ${reader} declares it needs ${token}, but no pattern in it looks for one`,
+        );
+      }
     }
   }
-  assert.deepEqual(
-    [...seen].sort(),
-    [...EXTERNAL_PREREQUISITES].sort(),
-    'a prerequisite nobody imports is a dependency a game would install for nothing',
-  );
 });
 
 test('a dynamic import must name its module as a literal', () => {
@@ -172,7 +227,7 @@ test('a dynamic import must name its module as a literal', () => {
   // Forbidden rather than tolerated: nothing in a transport layer needs to
   // choose its SDK by computation, and a game that one day does can declare a
   // seam for it.
-  for (const [file, source] of sources) {
+  for (const [file, source] of allSources) {
     const code = stripComments(source);
     for (const match of code.matchAll(/\bimport\s*\(/g)) {
       assert.match(
@@ -187,7 +242,7 @@ test('a dynamic import must name its module as a literal', () => {
 test('the template never imports the starter', () => {
   // The starter is a devDependency. A template module importing it would put it
   // in the shipped bundle of every game cut from this one.
-  for (const [file, source] of sources) {
+  for (const [file, source] of allSources) {
     for (const specifier of readImports(source)) {
       assert.ok(
         specifier !== FORBIDDEN_RUNTIME_IMPORT && !specifier.startsWith(`${FORBIDDEN_RUNTIME_IMPORT}/`),
