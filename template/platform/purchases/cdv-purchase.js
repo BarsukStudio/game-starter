@@ -187,7 +187,8 @@ export function order(productId) {
 //
 // What this must never become is authoritative in the other direction: `false`
 // here means "the store did not say yes", which is not the same as "the player
-// does not own it" — see `syncRemoveAdsEntitlementFromStore()` in the game.
+// does not own it". Whatever the game builds on top of this answer must never
+// revoke an entitlement on the strength of a `false`.
 export function isOwned(productId) {
   const store = namespace?.store;
   if (!store || !productId) return false;

@@ -193,7 +193,8 @@ export const cases = [
     },
   },
   {
-    // Only the interstitial. Whether owning remove_ads also stops a rewarded ad
+    // Only the interstitial. Whether the ads-removal entitlement also stops a
+    // rewarded ad
     // is the game's decision — one game sells the removal of interruptions and
     // keeps its opt-in rewards, another unlocks everything and has nothing left
     // to reward — and a contract that picked a side would be writing policy.
@@ -212,7 +213,7 @@ export const cases = [
       assert.equal(
         count(names(), 'onInterstitialShown'),
         0,
-        'an owner of remove_ads is not shown an interstitial'
+        'an owner of the ads-removal entitlement is not shown an interstitial'
       );
     },
   },

@@ -73,7 +73,7 @@ export const cases = [
       assert.equal(
         names().filter((name) => name === 'onInterstitialShown').length,
         0,
-        'an owner of remove_ads must not be shown an interstitial'
+        'an owner of the ads-removal entitlement must not be shown an interstitial'
       );
       assert.ok(
         names().includes('onInterstitialShowFailed'),

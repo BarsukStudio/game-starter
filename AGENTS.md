@@ -31,9 +31,19 @@ earns its own extraction cycle through a second consumer that genuinely needs it
 
 ## Hard rules
 
-1. **No game may be identifiable in here.** No product, ad or app ids, no
-   storage keys, no marker globals, no reward amounts, no UI, no translations.
-   Where the template needs one, it reads it from consumer config.
+1. **No game-specific runtime values or copied-template identifiers may live
+   here.** No product, ad or app ids, no storage keys, no marker globals, no
+   reward amounts, no UI, no translations. Where the template needs one, it
+   reads it from consumer config.
+   `template/` must stay consumer-neutral: no game's name, no reference into a
+   game's own modules, not even in a comment — it is the part that gets copied,
+   and a copied comment carries the first consumer's vocabulary into every game
+   cut from it.
+   A consumer's name may appear in repository documentation and in
+   `contract/` and `test/` provenance, and only where it explains where a piece
+   of evidence came from or why a case exists. That history is worth keeping:
+   it cannot reach a shipped bundle, and erasing it would leave the reasoning
+   behind these files unexplained.
 2. **The contract is names and versions, never behaviour of one plugin.**
    Canonical cases are written against the consumer's real
    `createPlatformController()`. A rule that only makes sense for

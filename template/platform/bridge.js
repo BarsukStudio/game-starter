@@ -454,7 +454,8 @@ export function preloadRewardedAd() {
   }
 }
 
-// Single entry point for "the user owns remove_ads", and deliberately one-way.
+// Single entry point for "the player owns the ads-removal entitlement", and
+// deliberately one-way.
 // Latching the flag before hiding matters: ownership can arrive while
 // initialization is still awaiting a consent form, and a bare hide would be a
 // no-op against a banner that does not exist yet, after which init would happily
@@ -463,10 +464,10 @@ export function preloadRewardedAd() {
 // There is no counterpart that turns ads back on. No store adapter can tell "the
 // player does not own this" apart from "no receipt was loaded" — the App Store
 // reports its receipts ready even when the load timed out — so acting on a
-// negative answer means taking a paid entitlement away on a bad network. The
-// game side documents the trade in `syncRemoveAdsEntitlementFromStore()`; a QA
-// reset goes through `gymDebug.resetRemoveAds()`, which reloads the WebView and
-// so rebuilds this state from scratch.
+// negative answer means taking a paid entitlement away on a bad network. Where
+// a game documents that trade is its own business, and a QA reset belongs on
+// the game's side too — reloading the WebView rebuilds this state from scratch,
+// which is the only reset this module needs to know about.
 export function setAdsRemovedOwned() {
   state.removeAdsFlag = true;
   hideBannerAd();

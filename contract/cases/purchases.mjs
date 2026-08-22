@@ -209,9 +209,10 @@ export const cases = [
     },
   },
   {
-    // No timeout, no status: gym's answer to a store that never replies lives in
-    // a headless module of its own, and a platform that has no such module is
-    // not in breach. What crosses the facade is the store's own answer.
+    // No timeout, no status. A platform whose answer to a store that never
+    // replies lives in a headless module of its own is not in breach, and one
+    // that has no such module is not either: what crosses the facade is the
+    // store's own answer, and what a game does while waiting is its business.
     name: 'restore-delegates-to-the-store-and-answers-a-promise',
     environment: 'native-store',
     async run(harness) {
