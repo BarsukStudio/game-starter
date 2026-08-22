@@ -1,0 +1,230 @@
+// Yandex native ads, through the Capacitor plugin.
+//
+// Routed by a `ru*` locale (the bridge decides), so this is the ad stack a
+// Russian-locale native player gets instead of AdMob. The plugin is imported
+// dynamically: every other target ships without it, and a static import would
+// pull it into all five bundles.
+//
+// The adapter owns no provider state and has no module-scope side effect — the
+// plugin handle, the injected dependencies and nothing else. The bridge owns the
+// shared ad lifecycles and opens every operation on them (`beginShow`,
+// `beginLoad`); this file only drives the SDK and reports what it answered.
+import { debugLog } from '../../debug.js';
+import { APP_CONFIG } from '../config.js';
+import { getNativeKey } from '../env.js';
+
+let deps = null;
+let plugin = null;
+
+function getConfig() {
+  if (APP_CONFIG.ads.nativeTestMode) return APP_CONFIG.ads.yandex.test;
+  return APP_CONFIG.ads.yandex[getNativeKey()];
+}
+
+async function ensurePlugin() {
+  if (plugin) return plugin;
+  const module = await import('capacitor-plugin-yandex-ads');
+  // Capacitor proxies synthesize arbitrary property names as native methods,
+  // including `then`. Keep the proxy inside a plain object so returning it from
+  // this async function cannot trigger Promise thenable assimilation.
+  plugin = { YandexAds: module.YandexAds ?? null };
+  return plugin;
+}
+
+// Whether the plugin handle is already in hand. The bridge asks before it opens
+// a load, because a preload dispatched at a provider whose SDK never arrived
+// would leave the lifecycle waiting on a watchdog instead of not starting.
+export function isPluginLoaded() {
+  return Boolean(plugin);
+}
+
+async function showBanner(YandexAds) {
+  if (deps.isAdsRemoved()) return false;
+  const config = getConfig();
+  try {
+    await YandexAds.showBanner({ adUnitId: config.banner });
+    // Ownership can be restored while the native banner is loading. Remove it
+    // immediately instead of leaving a paid owner with a visible banner.
+    if (deps.isAdsRemoved()) {
+      await YandexAds.removeBanner();
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn('YandexAds banner show failed', error);
+    return false;
+  }
+}
+
+// Returns whether the SDK came up. The bridge turns the provider off on false,
+// and decides from its own routing whether AdMob gets a turn afterwards.
+export async function init(injected) {
+  deps = injected;
+
+  let YandexAds;
+  try {
+    YandexAds = (await ensurePlugin())?.YandexAds;
+    if (!YandexAds) throw new Error('YandexAds Capacitor plugin is unavailable');
+    await YandexAds.initialize({
+      userConsent: true,
+      locationTracking: false,
+      enableLogging: APP_CONFIG.ads.nativeTestMode,
+    });
+    // Yandex native is routed by `ru*` locale, so almost all of this audience
+    // sits outside the GDPR region, where consent is not required and a hard
+    // `false` only costs personalization. Consent is therefore claimed
+    // unconditionally, matching the previous release of the game. This is
+    // knowingly wrong for a `ru*` player inside the EEA/UK: the fix is a real
+    // consent signal (UMP region check, then `IABTCF_AddtlConsent` for Yandex
+    // AC vendor 1033), not a different constant here.
+    await YandexAds.setUserConsent({ value: true });
+
+    await Promise.all([
+      YandexAds.addListener(
+        'rewardedLoaded',
+        (payload) => deps.rewarded.loadSucceeded(payload),
+      ),
+      YandexAds.addListener(
+        'rewardedFailedToLoad',
+        (error) => deps.rewarded.loadFailed(error),
+      ),
+      YandexAds.addListener(
+        'rewardedShown',
+        () => deps.rewarded.showStarted(),
+      ),
+      YandexAds.addListener(
+        'rewardedFailedToShow',
+        (error) => deps.rewarded.showFailed(error),
+      ),
+      YandexAds.addListener(
+        'rewarded',
+        (payload) => deps.rewarded.rewardEarned(payload),
+      ),
+      YandexAds.addListener(
+        'interstitialLoaded',
+        (payload) => deps.interstitial.loadSucceeded(payload),
+      ),
+      YandexAds.addListener(
+        'interstitialFailedToLoad',
+        (error) => deps.interstitial.loadFailed(error),
+      ),
+      YandexAds.addListener(
+        'interstitialShown',
+        () => deps.interstitial.showStarted(),
+      ),
+      YandexAds.addListener(
+        'interstitialFailedToShow',
+        (error) => deps.interstitial.showFailed(error),
+      ),
+      YandexAds.addListener(
+        'interstitialDismissed',
+        () => deps.interstitial.showClosed(),
+      ),
+      YandexAds.addListener('bannerLoaded', () => debugLog('YandexAds banner loaded')),
+      YandexAds.addListener(
+        'bannerFailedToLoad',
+        (error) => console.warn('YandexAds banner load failed', error),
+      ),
+    ]);
+    debugLog(`YandexAds OK (${APP_CONFIG.ads.nativeTestMode ? 'test' : 'production'} ads)`);
+  } catch (error) {
+    console.warn('YandexAds initialize failed', error);
+    return false;
+  }
+
+  if (!deps.isAdsRemoved()) {
+    deps.preloadInterstitial();
+    void showBanner(YandexAds);
+  }
+
+  deps.preloadRewarded();
+  return true;
+}
+
+export async function showInterstitial() {
+  const lifecycle = deps.interstitial;
+  if (typeof plugin?.YandexAds?.showInterstitial !== 'function') {
+    lifecycle.showFailed(new Error('Yandex interstitial API is unavailable'));
+    return false;
+  }
+  const result = await plugin.YandexAds.showInterstitial();
+  if (result?.presented !== true) {
+    lifecycle.showFailed(new Error('Yandex interstitial failed to present'));
+    return false;
+  }
+  // Native events normally drive these transitions. The result is a
+  // terminal fallback for a bridge that returned without an event.
+  lifecycle.showStarted();
+  lifecycle.showClosed();
+  return true;
+}
+
+export async function showRewarded() {
+  const lifecycle = deps.rewarded;
+  if (typeof plugin?.YandexAds?.showRewarded !== 'function') {
+    lifecycle.showFailed(new Error('Yandex rewarded API is unavailable'));
+    return false;
+  }
+  const result = await plugin.YandexAds.showRewarded();
+  if (result?.presented !== true) {
+    lifecycle.showFailed(new Error('Yandex rewarded ad failed to present'));
+    return false;
+  }
+  // The event remains authoritative when available; these calls only
+  // complete a lifecycle if the native listener was silent. The plugin
+  // resolves this result on dismissal, so close only after applying its
+  // reward bit. A separate dismissed listener could close the FSM first
+  // and lose a reward when the rewarded event itself was dropped.
+  lifecycle.showStarted();
+  if (result.rewarded === true) lifecycle.rewardEarned(result);
+  lifecycle.showClosed();
+  return true;
+}
+
+export function preloadInterstitial() {
+  const lifecycle = deps.interstitial;
+  void Promise.resolve()
+    .then(() => plugin.YandexAds.prepareInterstitial({
+      adUnitId: getConfig().interstitial,
+    }))
+    .then((payload) => lifecycle.loadSucceeded(payload))
+    .catch((error) => {
+      console.warn('YandexAds interstitial preload failed', error);
+      lifecycle.loadFailed(error);
+    });
+}
+
+export function preloadRewarded() {
+  const lifecycle = deps.rewarded;
+  void Promise.resolve()
+    .then(() => plugin.YandexAds.prepareRewarded({
+      adUnitId: getConfig().rewarded,
+    }))
+    .then((payload) => lifecycle.loadSucceeded(payload))
+    .catch((error) => {
+      console.warn('YandexAds rewarded preload failed', error);
+      lifecycle.loadFailed(error);
+    });
+}
+
+// Hiding a banner on the active provider: the plugin is already loaded, and an
+// older build without `removeBanner` must not throw on an owner's first launch.
+export function hideBanner() {
+  if (typeof plugin?.YandexAds?.removeBanner !== 'function') return;
+  void Promise.resolve()
+    .then(() => plugin.YandexAds.removeBanner())
+    .catch((error) => console.warn('YandexAds banner hide failed', error));
+}
+
+// QA provider switching, which is a different problem: the native banner view
+// outlives a WebView reload, so the banner left behind by the *previous*
+// provider has to go even when this adapter never initialized in this session.
+// That is why this one may still load the plugin, and why it swallows
+// everything — a cleanup that cannot run must not block the reload.
+export async function removeBannerIfAvailable() {
+  const YandexAds = await ensurePlugin()
+    .then((module) => module?.YandexAds ?? null)
+    .catch(() => null);
+  if (typeof YandexAds?.removeBanner !== 'function') return;
+  await YandexAds.removeBanner();
+}

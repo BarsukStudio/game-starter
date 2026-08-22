@@ -12,6 +12,7 @@
     "./contract/manifest": "./contract/manifest.js",
     "./contract/runner": "./contract/runner.mjs",
     "./contract/cases": "./contract/cases/index.mjs",
+    "./template/config-schema": "./template/platform/config.schema.js",
     "./package.json": "./package.json"
   },
   "files": [
