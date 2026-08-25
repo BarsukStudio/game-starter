@@ -26,6 +26,10 @@ const DEBUG_NATIVE_AD_PROVIDER_KEY = APP_CONFIG.platform.debugAdsProviderKey;
 // empty: a game with no such history has nothing to clean up.
 const LEGACY_PRODUCTION_AD_PROVIDER_KEYS = APP_CONFIG.platform.legacyAdsProviderKeys;
 const DEBUG_NATIVE_AD_PROVIDERS = new Set(['admob', 'yandex', 'off']);
+// How long the QA switch waits for the native banners to come down before it
+// reloads anyway. Long enough for a plugin that is going to answer, short
+// enough that a stuck one is not mistaken for a dead override.
+const DEBUG_BANNER_REMOVAL_TIMEOUT_MS = 1500;
 
 const state = {
   callbacks: {},
@@ -100,9 +104,20 @@ async function removeNativeBannersBeforeDebugReload() {
   // whichever one ran before the reload. The names differ because the semantics
   // do: the Yandex plugin may still have to be loaded, the AdMob one is always
   // there.
-  await Promise.allSettled([
-    Promise.resolve().then(() => nativeAdmob.removeBanner()),
-    nativeYandex.removeBannerIfAvailable(),
+  //
+  // Bounded, because these are native calls: a plugin that answers neither way
+  // leaves the promise pending for the life of the page, and an unbounded await
+  // here is what strands the switch. A banner that outlived the timeout is a
+  // visible, one-reload problem; a switch that never reloads looks like the
+  // override was ignored.
+  await Promise.race([
+    Promise.allSettled([
+      Promise.resolve().then(() => nativeAdmob.removeBanner()),
+      nativeYandex.removeBannerIfAvailable(),
+    ]),
+    new Promise((resolve) => {
+      window.setTimeout(resolve, DEBUG_BANNER_REMOVAL_TIMEOUT_MS);
+    }),
   ]);
 }
 
@@ -126,21 +141,30 @@ function registerNativeAdProviderDebugHelper() {
 
     // Native banner views outlive a WebView reload. Remove both providers so a
     // QA switch cannot stack the new banner on top of the previous provider.
-    await removeNativeBannersBeforeDebugReload();
+    //
+    // The reload is scheduled in `finally`. The override is already written to
+    // storage by this point, so every path out of here — a rejected native
+    // call, a throw while reading the new selection — has to end in a reload;
+    // otherwise the page keeps serving the provider the switch just replaced
+    // and reports it back as the current one.
+    try {
+      await removeNativeBannersBeforeDebugReload();
 
-    const selection = resolveNativeAdProvider(state.callbacks.locale);
-    const status = {
-      provider: selection.provider,
-      source: selection.source,
-      debugOverride: selection.debugOverride,
-      remoteConfigKey: null,
-      testMode: APP_CONFIG.ads.nativeTestMode,
-      adsRemoved: state.removeAdsFlag,
-      reloading: true,
-    };
-    console.log('[debugAdsProvider]', status);
-    window.setTimeout(() => window.location.reload(), 100);
-    return status;
+      const selection = resolveNativeAdProvider(state.callbacks.locale);
+      const status = {
+        provider: selection.provider,
+        source: selection.source,
+        debugOverride: selection.debugOverride,
+        remoteConfigKey: null,
+        testMode: APP_CONFIG.ads.nativeTestMode,
+        adsRemoved: state.removeAdsFlag,
+        reloading: true,
+      };
+      console.log('[debugAdsProvider]', status);
+      return status;
+    } finally {
+      window.setTimeout(() => window.location.reload(), 100);
+    }
   };
   helper.status = getNativeAdProviderDebugStatus;
   window.debugAdsProvider = helper;

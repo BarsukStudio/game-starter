@@ -4,13 +4,19 @@ The versioned platform contract and the starter template shared by Barsuk Studio
 games. Plain ES modules, no build step, no dependencies.
 
 **Status: pre-alpha.** The contract manifest and its conformance suite are
-canonical, and Muscle Clicker runs against them. `template/` carries two trees
-cut from that game — `platform/`, the transport layer a game bundles, and
-`scripts/`, the build, sync and release scripts it runs under Node — plus
-`schemas/`, which states what a consumer's two config files must provide and is
-imported from this package rather than copied. Nothing here has been
-consumed by a second game yet, which is exactly why `CONTRACT_VERSION` is `0.1.0`
-and not `1.0.0`: the shape is proven to work, not proven to transfer.
+canonical. `template/` carries two trees cut from Muscle Clicker — `platform/`,
+the transport layer a game bundles, and `scripts/`, the build, sync and release
+scripts it runs under Node — plus `schemas/`, which states what a consumer's two
+config files must provide and is imported from this package rather than copied.
+
+Two games run against it now: Muscle Clicker, which it was cut from, and Muscle
+Clicker 2, which took the template as it stands and passes the same conformance
+run. That settles the first question a shared layer has to settle — whether the
+shape transfers, or only ever fitted the game it came from. It settles nothing
+about the second. `CONTRACT_VERSION` stays `0.1.0` because `1.0.0` is a promise
+not to move these names, and that promise has not been made: a transfer that
+worked twice is evidence, not a commitment. The package version moves with every
+batch that ships; the contract version does not follow it.
 
 ## The layer this owns
 
@@ -42,7 +48,7 @@ required *result* may not.
 | `contract/fixtures-schema.js` | what a consumer must supply, and what it may never substitute |
 | `contract/cases/` | the canonical cases — surface, startup, ads, purchases, lifecycle and links |
 | `contract/plain-data.js` | whether a value is something a game could have written down itself |
-| `fixtures/`, `test/` | miniature consumers and the suite's own tests |
+| `fixtures/`, `test/` | miniature consumers, the seam stand-ins the template's own suites run against, and the tests |
 
 A consumer supplies fixtures — the environment, the SDKs, the external events —
 and the runner imports that consumer's real `createPlatformController()`. It may

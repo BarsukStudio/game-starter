@@ -267,3 +267,28 @@ test('the purchase capability is gated on the catalogue, not on the shell', () =
     'a build with an empty catalogue is valid, but it may not claim it can sell',
   );
 });
+
+test('the native banner is adaptive, and says so in code rather than in prose', () => {
+  // A literal, pinned for the same reason the capability above is: the size the
+  // banner is requested at is template policy, and nothing downstream notices
+  // when it changes. It changed once already — a game whose own bridge asked for
+  // an adaptive banner was cut over to this template, which asked for a smart
+  // one, and nothing objected: AdMob serves both, so the build, the tests and the
+  // logs all stayed green while the banner got smaller.
+  //
+  // Read with the comments stripped, because the prose beside the literal names
+  // the size it replaced.
+  const admob = stripComments(
+    fs.readFileSync(path.join(platformRoot, 'ads', 'native-admob.js'), 'utf8'),
+  );
+  assert.match(
+    admob,
+    /adSize: BannerAdSize\.ADAPTIVE_BANNER/,
+    'the native banner must be requested at the adaptive size',
+  );
+  assert.doesNotMatch(
+    admob,
+    /SMART_BANNER/,
+    'SMART_BANNER is a fixed 320x50 on phones; it may not come back by a re-sync',
+  );
+});

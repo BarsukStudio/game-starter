@@ -137,7 +137,10 @@ export async function init(injected) {
       try {
         await AdMob.showBanner({
           adId: config.banner,
-          adSize: BannerAdSize.SMART_BANNER,
+          // ADAPTIVE_BANNER, not SMART_BANNER: the latter is a fixed 320x50 on
+          // phones whatever the screen width, and nothing downstream reports the
+          // difference — AdMob serves both. Adaptive sizes to the container.
+          adSize: BannerAdSize.ADAPTIVE_BANNER,
           position: BannerAdPosition.BOTTOM_CENTER,
           margin: 0,
           isTesting: config.useSampleAds,
