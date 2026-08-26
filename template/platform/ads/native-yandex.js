@@ -222,9 +222,20 @@ export function hideBanner() {
 // That is why this one may still load the plugin, and why it swallows
 // everything — a cleanup that cannot run must not block the reload.
 export async function removeBannerIfAvailable() {
-  const YandexAds = await ensurePlugin()
-    .then((module) => module?.YandexAds ?? null)
-    .catch(() => null);
+  // The handle is unwrapped by property access after the await, never returned
+  // from a `.then` callback. A callback that returned the proxy would hand it
+  // to the promise resolution procedure, which reads `.then` on whatever it is
+  // given — and the proxy synthesizes that name into a native call like any
+  // other. `YandexAds.then()` does not exist, so it rejects a promise nobody
+  // holds, neither settles the outer one, and this await never returns. See
+  // `ensurePlugin()` for the other half of the same rule.
+  let handle = null;
+  try {
+    handle = await ensurePlugin();
+  } catch (_) {
+    return;
+  }
+  const YandexAds = handle?.YandexAds;
   if (typeof YandexAds?.removeBanner !== 'function') return;
   await YandexAds.removeBanner();
 }

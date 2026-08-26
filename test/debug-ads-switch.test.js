@@ -230,6 +230,29 @@ for (const stuck of ['admob', 'yandex']) {
   });
 }
 
+test('the Yandex removal reaches the SDK instead of the promise machinery', needsHooks, async () => {
+  const world = await loadSwitch({});
+
+  const switched = world.debugAdsProvider('admob');
+  await settlesWithin(switched, 'the switch never answered');
+
+  // The reload is deliberately not what this case turns on. A handle that got
+  // assimilated leaves its await pending forever, the bound above expires, and
+  // the page reloads on time looking entirely healthy — while the banner the
+  // switch was escaping is still on screen, now under the new provider's one.
+  // So this pins the call itself.
+  assert.ok(
+    world.probe.removed.includes('yandex'),
+    'the Yandex banner removal must reach the SDK, not merely be attempted',
+  );
+  assert.deepEqual(
+    world.probe.synthesized,
+    [],
+    'a name synthesized on the plugin handle means something read a property off '
+      + 'the proxy that no plugin implements — `then` above all',
+  );
+});
+
 test('the reload does not depend on the rest of the switch succeeding', needsHooks, async () => {
   const world = await loadSwitch({});
 

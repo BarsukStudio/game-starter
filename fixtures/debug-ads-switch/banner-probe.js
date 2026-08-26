@@ -14,6 +14,7 @@ export function beginCase(behaviour) {
   current = {
     behaviour: { admob: SETTLES, yandex: SETTLES, ...behaviour },
     removed: [],
+    synthesized: [],
   };
   return current;
 }
@@ -28,4 +29,11 @@ export function removeBanner(provider) {
   if (behaviour === HANGS) return pending();
   if (behaviour === REJECTS) return Promise.reject(new Error(`${provider} removeBanner failed`));
   return Promise.resolve();
+}
+
+// A name the Capacitor stand-in had to invent, because nothing implements it.
+// `then` showing up here means something handed the plugin proxy to the promise
+// machinery, which is the whole point of the case that reads this.
+export function recordSynthesized(name) {
+  current.synthesized.push(name);
 }
