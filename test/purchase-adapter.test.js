@@ -56,7 +56,7 @@ const STORE_KEYS = SELLING_STORE_KEYS;
 const SEAM_FIXTURES = new Map([
   ['config.js', 'config.js'],
   ['env.js', 'env.js'],
-  ['purchase-delivery.js', 'purchase-delivery.js'],
+  ['@barsuk/game-runtime/purchase-delivery', 'purchase-delivery.js'],
   ['@barsuk/game-runtime/purchase-finish', 'purchase-finish.js'],
   ['capacitor-plugin-cdv-purchase', 'cdv-purchase-sdk.js'],
 ]);

@@ -18,13 +18,13 @@ import {
   createPurchaseFinishCoordinator,
   isSettledStoreTransaction,
 } from '@barsuk/game-runtime/purchase-finish';
-
-import { APP_CONFIG } from '../config.js';
-import { getNativeKey, isNative } from '../env.js';
 import {
   getTransactionDeliveryId,
   getTransactionProductId,
-} from '../purchase-delivery.js';
+} from '@barsuk/game-runtime/purchase-delivery';
+
+import { APP_CONFIG } from '../config.js';
+import { getNativeKey, isNative } from '../env.js';
 
 // The plugin is an ES module that owns the CdvPurchase namespace, not a global
 // the page waits for, so it is imported once and kept. A failed import stays

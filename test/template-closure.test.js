@@ -15,7 +15,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { FORBIDDEN_RUNTIME_IMPORT, TEMPLATE_TREES } from '../template/manifest.js';
+import {
+  FORBIDDEN_RUNTIME_IMPORT,
+  SEAMS_AWAITING_EXTRACTION,
+  TEMPLATE_TREES,
+} from '../template/manifest.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const templateRoot = path.join(here, '..', 'template');
@@ -291,4 +295,19 @@ test('the native banner is adaptive, and says so in code rather than in prose', 
     /SMART_BANNER/,
     'SMART_BANNER is a fixed 320x50 on phones; it may not come back by a re-sync',
   );
+});
+
+test('every seam awaiting extraction is still a seam', () => {
+  // The list is documentation, and documentation about a move is wrong the
+  // moment the move happens. An extracted module stops being a seam and becomes
+  // a prerequisite, so a name left behind here would tell the next reader that a
+  // migration is still pending after it has already been done — the one reading
+  // the list is exactly the person who cannot check.
+  const seams = Object.keys(TEMPLATE_TREES.platform.seams);
+  for (const seam of SEAMS_AWAITING_EXTRACTION) {
+    assert.ok(
+      seams.includes(seam),
+      `${seam} awaits extraction but the platform tree no longer declares it as a seam`,
+    );
+  }
 });
