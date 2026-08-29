@@ -197,6 +197,11 @@ function getPresentationTimeoutMs() {
 }
 
 state.interstitialLifecycle = createAdLifecycle({
+  // Timers are a dependency, never an ambient global: the lifecycle is a headless
+  // state machine that the contract tests drive on a fake clock, and the bridge is
+  // the only layer here that owns a real window.
+  setTimeoutFn: (handler, delayMs) => window.setTimeout(handler, delayMs),
+  clearTimeoutFn: (timer) => window.clearTimeout(timer),
   name: 'Interstitial ad',
   presentationTimeoutMs: getPresentationTimeoutMs,
   callbacks: {
@@ -209,6 +214,8 @@ state.interstitialLifecycle = createAdLifecycle({
 });
 
 state.rewardedLifecycle = createAdLifecycle({
+  setTimeoutFn: (handler, delayMs) => window.setTimeout(handler, delayMs),
+  clearTimeoutFn: (timer) => window.clearTimeout(timer),
   name: 'Rewarded ad',
   presentationTimeoutMs: getPresentationTimeoutMs,
   // Only AdMob mediation can deliver a reward after its dismissal. Yandex and
