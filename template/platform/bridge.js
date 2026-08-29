@@ -2,7 +2,8 @@ import {
   AD_LATE_REWARD_GRACE_MS,
   AD_PRESENTATION_TIMEOUT_MS,
   createAdLifecycle,
-} from './ad-lifecycle.js';
+} from '@barsuk/game-runtime/ad-lifecycle';
+
 import { APP_CONFIG } from './config.js';
 import {
   getStoreKey,

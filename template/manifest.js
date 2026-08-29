@@ -32,12 +32,6 @@ export const TEMPLATE_TREES = Object.freeze({
       // `../schemas/config.schema.js` states its shape, and a game imports it from
       // this package rather than copying it.
       './config.js': Object.freeze(['APP_CONFIG', 'getMobileStoreKey']),
-      // The shared load/show/reward state machine both ad paths report into.
-      './ad-lifecycle.js': Object.freeze([
-        'AD_LATE_REWARD_GRACE_MS',
-        'AD_PRESENTATION_TIMEOUT_MS',
-        'createAdLifecycle',
-      ]),
       // The game's own debug logging, used by the two native ad adapters.
       '../debug.js': Object.freeze(['debugLog']),
     }),
@@ -45,6 +39,7 @@ export const TEMPLATE_TREES = Object.freeze({
     // exactly one module each, so this is also the list of capabilities it can
     // lose by deleting one file.
     prerequisites: Object.freeze([
+      '@barsuk/game-runtime/ad-lifecycle',
       '@barsuk/game-runtime/purchase-delivery',
       '@barsuk/game-runtime/purchase-finish',
       '@capacitor-community/admob',
@@ -90,21 +85,6 @@ export const TEMPLATE_TREES = Object.freeze({
     ]),
   }),
 });
-
-// One platform seam is temporary, and saying so here keeps a later move from
-// reading as drift: `ad-lifecycle.js` is headless logic destined for
-// `@barsuk/game-runtime`, through an extraction of its own once it is ready for
-// one. Until then every game supplies its own copy, and the template imports it
-// as a seam like any other.
-//
-// `purchase-delivery.js` was the other, and is gone from this list because the
-// move happened: it is a prerequisite above now, not a seam. Every name here has
-// to be a seam the tree still declares — the closure suite checks that, so a
-// name left behind after its extraction fails rather than quietly misinforming
-// the next reader.
-export const SEAMS_AWAITING_EXTRACTION = Object.freeze([
-  './ad-lifecycle.js',
-]);
 
 // The starter is a devDependency: nothing in a shipped bundle may import it. The
 // template is the part most likely to break that rule by accident, because it is
