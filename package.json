@@ -1,6 +1,6 @@
 {
   "name": "@barsuk/game-starter",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "The versioned platform contract and starter template shared by Barsuk Studio games",
   "type": "module",
   "private": true,
