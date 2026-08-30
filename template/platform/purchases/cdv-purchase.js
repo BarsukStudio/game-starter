@@ -399,11 +399,13 @@ export async function initializeStore(callbacks = {}) {
     console.warn('Receipt verification failed; nothing granted.', unverifiedReceipt?.payload);
   });
 
-  await store.initialize([platform]).then((error) => {
-    // The plugin reports a non-fatal startup problem by resolving with an error
-    // object rather than rejecting. It goes down the same reporting channel as
-    // everything else here; it is not a result the game acts on.
-    if (error) callbacks.onWarn?.('Purchase store initialization reported an error.', error);
+  await store.initialize([platform]).then((errors) => {
+    // The plugin reports non-fatal startup problems by resolving with an array of
+    // them rather than rejecting — `Promise<IError[]>`, empty when nothing went
+    // wrong. An empty array is still truthy, so the emptiness is what has to be
+    // tested. They go down the same reporting channel as everything else here;
+    // it is not a result the game acts on.
+    if (errors.length) callbacks.onWarn?.('Purchase store initialization reported an error.', errors);
     // The catalogue is readable from here, and not one line earlier.
     offersReady = true;
     // The same two signals every other store event sends. A store that just came

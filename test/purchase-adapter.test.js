@@ -107,6 +107,9 @@ function freshProbe() {
     ownedAsked: [],
     settledAsked: [],
     finished: [],
+    // What `store.initialize()` resolves. Empty is the clean startup, which is
+    // the default because it is what the plugin answers when nothing went wrong.
+    initializeResult: [],
   };
   return globalThis.__storeProbe;
 }
@@ -321,6 +324,39 @@ test('[empty] nothing is registered with the store when there is nothing to sell
     adapter.getDebugSnapshot().ownedNonConsumablesByKey,
     {},
     'a store with nothing to own answers an empty map, not null — null means there was no store',
+  );
+});
+
+// The two directions of `store.initialize()`, which is the one plugin answer
+// whose *shape* the adapter has to read rather than pass on.
+//
+// The pair exists because the failing half passes on its own. `Promise<IError[]>`
+// resolves an empty array on a clean startup, and an empty array is truthy — so
+// an adapter testing the result for existence reports a problem on every single
+// successful launch, and only a case that asserts silence catches it. Both games
+// carried the fix before this suite could see it: the fake resolved `undefined`,
+// where the difference does not exist.
+test('a clean startup reports nothing, however truthy its empty result', needsHooks, async () => {
+  const { adapter } = await loadAdapter(SELLING_STORE_KEYS[0]);
+  const reported = [];
+  await adapter.initializeStore({ onWarn: (...args) => reported.push(args) });
+  assert.deepEqual(reported, [], 'an empty error list is a clean startup, not a problem');
+});
+
+test('a startup problem reaches the game through the shared warning channel', needsHooks, async () => {
+  const { adapter, probe } = await loadAdapter(SELLING_STORE_KEYS[0]);
+  const storeError = { code: 6777003, message: 'setup failed' };
+  probe.initializeResult = [storeError];
+  const reported = [];
+  await adapter.initializeStore({ onWarn: (message, detail) => reported.push([message, detail]) });
+
+  assert.deepEqual(reported, [['Purchase store initialization reported an error.', [storeError]]]);
+  // The store still came up, so the catalogue opens anyway: a non-fatal problem
+  // is reported, never acted on.
+  assert.deepEqual(
+    Object.keys(adapter.getPrices()).sort(),
+    Object.keys(CATALOGUES[SELLING_STORE_KEYS[0]]).sort(),
+    'a reported problem does not close the catalogue',
   );
 });
 

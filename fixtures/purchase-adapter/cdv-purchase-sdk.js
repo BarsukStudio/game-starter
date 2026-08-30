@@ -49,9 +49,14 @@ const store = {
     return probe().owned[id] === true;
   },
   when,
+  // `Promise<IError[]>`, as the plugin declares it (`www/store.d.ts`): a clean
+  // startup resolves an *empty array*, not nothing. The distinction is the whole
+  // reason this fake states the shape — an empty array is truthy, so an adapter
+  // testing the result for existence rather than emptiness warns on every
+  // successful launch, and a fake resolving `undefined` never shows it.
   initialize(platforms) {
     probe().initializedWith.push(...platforms);
-    return Promise.resolve(undefined);
+    return Promise.resolve(probe().initializeResult);
   },
   order() {
     return Promise.resolve(undefined);
