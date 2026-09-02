@@ -49,6 +49,7 @@ required *result* may not.
 | `contract/cases/` | the canonical cases — surface, startup, ads, purchases, lifecycle and links |
 | `contract/plain-data.js` | whether a value is something a game could have written down itself |
 | `fixtures/`, `test/` | miniature consumers, the seam stand-ins the template's own suites run against, and the tests |
+| `LEGACY_AUDIT_PROMPT.md` | read-only inventory workflow for already published legacy games |
 
 A consumer supplies fixtures — the environment, the SDKs, the external events —
 and the runner imports that consumer's real `createPlatformController()`. It may
@@ -68,6 +69,12 @@ that sells nothing is not in breach of a purchase contract.
 
 Pinned by exact SHA, as a devDependency. Nothing in a shipped bundle may import
 this package — consumers assert that in their own contract tests.
+
+The legacy migration baseline remains `10aa559`. Adding
+`LEGACY_AUDIT_PROMPT.md` is documentation-only: `CONTRACT_VERSION` and the
+template did not move, so consumers must not be repinned for this commit. Read
+the prompt from the working checkout, not from a pinned consumer's
+`node_modules`.
 
 ## Rules
 
