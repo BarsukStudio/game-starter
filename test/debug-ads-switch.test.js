@@ -41,6 +41,7 @@ const SEAM_FIXTURES = new Map([
   ['env.js', 'env.js'],
   ['debug.js', 'debug.js'],
   ['@barsuk/game-runtime/ad-lifecycle', 'ad-lifecycle.js'],
+  ['@barsuk/game-runtime/ad-attempt-scope', 'ad-lifecycle.js'],
   ['@barsuk/game-runtime/purchase-delivery', 'purchase-delivery.js'],
   ['@barsuk/game-runtime/purchase-finish', 'purchase-finish.js'],
   ['@capacitor-community/admob', 'admob-sdk.js'],

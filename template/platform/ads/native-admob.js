@@ -194,20 +194,21 @@ export async function showInterstitial() {
 }
 
 export async function showRewarded() {
+  const lifecycle = deps.rewarded.captureShow();
   // The plugin resolves this call only from its own reward callback, so
   // its resolution carries the same reward fact the Rewarded event does —
   // on a channel that survives a dismissal arriving first. It never
   // resolves when the player closes without a reward, so it must not be
   // awaited; both handlers are attached here instead.
   AdMob.showRewardVideoAd().then(
-    (payload) => deps.rewarded.rewardEarned(payload),
-    (error) => deps.rewarded.showFailed(error),
+    (payload) => lifecycle.rewardEarned(payload),
+    (error) => lifecycle.showFailed(error),
   );
   return true;
 }
 
 export function preloadInterstitial() {
-  const lifecycle = deps.interstitial;
+  const lifecycle = deps.interstitial.captureLoad();
   void Promise.resolve()
     .then(() => AdMob.prepareInterstitial(interstitialOptions))
     .catch((error) => {
@@ -217,7 +218,7 @@ export function preloadInterstitial() {
 }
 
 export function preloadRewarded() {
-  const lifecycle = deps.rewarded;
+  const lifecycle = deps.rewarded.captureLoad();
   void Promise.resolve()
     .then(() => AdMob.prepareRewardVideoAd(rewardOptions))
     .catch((error) => {

@@ -52,7 +52,7 @@ export function init(injected) {
 }
 
 export function showInterstitial() {
-  const lifecycle = deps.interstitial;
+  const lifecycle = deps.interstitial.captureShow();
   const crazySdk = window.CrazyGames?.SDK;
   if (typeof crazySdk?.ad?.requestAd !== 'function') {
     lifecycle.showFailed(new Error('CrazyGames interstitial API is unavailable'));
@@ -60,15 +60,18 @@ export function showInterstitial() {
   }
   crazySdk.ad.requestAd('midgame', {
     adStarted: () => {
+      if (!lifecycle.isCurrent()) return;
       crazySdk.game?.gameplayStop?.();
       lifecycle.showStarted();
     },
     adFinished: () => {
+      if (!lifecycle.isCurrent()) return;
       crazySdk.game?.gameplayStart?.();
       lifecycle.showStarted();
       lifecycle.showClosed();
     },
     adError: (error) => {
+      if (!lifecycle.isCurrent()) return;
       crazySdk.game?.gameplayStart?.();
       lifecycle.showFailed(error);
     },
@@ -77,7 +80,7 @@ export function showInterstitial() {
 }
 
 export function showRewarded() {
-  const lifecycle = deps.rewarded;
+  const lifecycle = deps.rewarded.captureShow();
   const crazySdk = window.CrazyGames?.SDK;
   if (typeof crazySdk?.ad?.requestAd !== 'function') {
     lifecycle.showFailed(new Error('CrazyGames rewarded API is unavailable'));
@@ -85,16 +88,19 @@ export function showRewarded() {
   }
   crazySdk.ad.requestAd('rewarded', {
     adStarted: () => {
+      if (!lifecycle.isCurrent()) return;
       crazySdk.game?.gameplayStop?.();
       lifecycle.showStarted();
     },
     adFinished: () => {
+      if (!lifecycle.isCurrent()) return;
       crazySdk.game?.gameplayStart?.();
       lifecycle.showStarted();
       lifecycle.rewardEarned();
       lifecycle.showClosed();
     },
     adError: (error) => {
+      if (!lifecycle.isCurrent()) return;
       crazySdk.game?.gameplayStart?.();
       lifecycle.showFailed(error);
     },
@@ -106,7 +112,7 @@ export function showRewarded() {
 // so a preload only reports whether the SDK is there to be called. The load is
 // already open by the time these run: the bridge owns `beginLoad`.
 export function preloadInterstitial() {
-  const lifecycle = deps.interstitial;
+  const lifecycle = deps.interstitial.captureLoad();
   if (typeof window.CrazyGames?.SDK?.ad?.requestAd === 'function') {
     lifecycle.loadSucceeded();
   } else {
@@ -115,7 +121,7 @@ export function preloadInterstitial() {
 }
 
 export function preloadRewarded() {
-  const lifecycle = deps.rewarded;
+  const lifecycle = deps.rewarded.captureLoad();
   if (typeof window.CrazyGames?.SDK?.ad?.requestAd === 'function') {
     lifecycle.loadSucceeded();
   } else {

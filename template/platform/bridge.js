@@ -1,3 +1,4 @@
+import { withAdAttemptScopes } from '@barsuk/game-runtime/ad-attempt-scope';
 import {
   AD_LATE_REWARD_GRACE_MS,
   AD_PRESENTATION_TIMEOUT_MS,
@@ -197,7 +198,7 @@ function getPresentationTimeoutMs() {
     : AD_PRESENTATION_TIMEOUT_MS;
 }
 
-state.interstitialLifecycle = createAdLifecycle({
+state.interstitialLifecycle = withAdAttemptScopes(createAdLifecycle, {
   // Timers are a dependency, never an ambient global: the lifecycle is a headless
   // state machine that the contract tests drive on a fake clock, and the bridge is
   // the only layer here that owns a real window.
@@ -214,7 +215,7 @@ state.interstitialLifecycle = createAdLifecycle({
   },
 });
 
-state.rewardedLifecycle = createAdLifecycle({
+state.rewardedLifecycle = withAdAttemptScopes(createAdLifecycle, {
   setTimeoutFn: (handler, delayMs) => window.setTimeout(handler, delayMs),
   clearTimeoutFn: (timer) => window.clearTimeout(timer),
   name: 'Rewarded ad',
@@ -392,6 +393,7 @@ export function getPurchaseProducts() {
 export async function showInterstitialAd() {
   const lifecycle = state.interstitialLifecycle;
   if (!lifecycle.beginShow()) return false;
+  const attempt = lifecycle.captureShow();
 
   // A countdown started before the restore can still fire afterwards, so the
   // owner check belongs here rather than only at the call sites.
@@ -416,7 +418,7 @@ export async function showInterstitialAd() {
     }
   } catch (error) {
     console.warn('Interstitial show failed', error);
-    lifecycle.showFailed(error);
+    attempt.showFailed(error);
     return false;
   }
 }
@@ -429,6 +431,7 @@ export async function showInterstitialAd() {
 export async function showRewardedAd() {
   const lifecycle = state.rewardedLifecycle;
   if (!lifecycle.beginShow()) return false;
+  const attempt = lifecycle.captureShow();
 
   try {
     switch (state.provider) {
@@ -446,7 +449,7 @@ export async function showRewardedAd() {
     }
   } catch (error) {
     console.warn('Rewarded show failed', error);
-    lifecycle.showFailed(error);
+    attempt.showFailed(error);
     return false;
   }
 }

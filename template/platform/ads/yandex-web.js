@@ -69,8 +69,9 @@ export async function init(injected) {
 }
 
 export async function showInterstitial() {
-  const lifecycle = deps.interstitial;
+  const lifecycle = deps.interstitial.captureShow();
   const portal = await ensureSdk();
+  if (!lifecycle.isCurrent()) return false;
   if (typeof portal?.adv?.showFullscreenAdv !== 'function') {
     lifecycle.showFailed(new Error('Yandex fullscreen API is unavailable'));
     return false;
@@ -87,8 +88,9 @@ export async function showInterstitial() {
 }
 
 export async function showRewarded() {
-  const lifecycle = deps.rewarded;
+  const lifecycle = deps.rewarded.captureShow();
   const portal = await ensureSdk();
+  if (!lifecycle.isCurrent()) return false;
   if (typeof portal?.adv?.showRewardedVideo !== 'function') {
     lifecycle.showFailed(new Error('Yandex rewarded API is unavailable'));
     return false;
@@ -107,7 +109,7 @@ export async function showRewarded() {
 // The portal prepares the ad inside the show call, so a preload only proves the
 // API is reachable. The load is already open: the bridge owns `beginLoad`.
 export function preloadInterstitial() {
-  const lifecycle = deps.interstitial;
+  const lifecycle = deps.interstitial.captureLoad();
   void ensureSdk()
     .then((portal) => {
       if (typeof portal?.adv?.showFullscreenAdv !== 'function') {
@@ -119,7 +121,7 @@ export function preloadInterstitial() {
 }
 
 export function preloadRewarded() {
-  const lifecycle = deps.rewarded;
+  const lifecycle = deps.rewarded.captureLoad();
   void ensureSdk()
     .then((portal) => {
       if (typeof portal?.adv?.showRewardedVideo !== 'function') {

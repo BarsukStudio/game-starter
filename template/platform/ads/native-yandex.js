@@ -142,7 +142,7 @@ export async function init(injected) {
 }
 
 export async function showInterstitial() {
-  const lifecycle = deps.interstitial;
+  const lifecycle = deps.interstitial.captureShow();
   if (typeof plugin?.YandexAds?.showInterstitial !== 'function') {
     lifecycle.showFailed(new Error('Yandex interstitial API is unavailable'));
     return false;
@@ -160,7 +160,7 @@ export async function showInterstitial() {
 }
 
 export async function showRewarded() {
-  const lifecycle = deps.rewarded;
+  const lifecycle = deps.rewarded.captureShow();
   if (typeof plugin?.YandexAds?.showRewarded !== 'function') {
     lifecycle.showFailed(new Error('Yandex rewarded API is unavailable'));
     return false;
@@ -182,7 +182,7 @@ export async function showRewarded() {
 }
 
 export function preloadInterstitial() {
-  const lifecycle = deps.interstitial;
+  const lifecycle = deps.interstitial.captureLoad();
   void Promise.resolve()
     .then(() => plugin.YandexAds.prepareInterstitial({
       adUnitId: getConfig().interstitial,
@@ -195,7 +195,7 @@ export function preloadInterstitial() {
 }
 
 export function preloadRewarded() {
-  const lifecycle = deps.rewarded;
+  const lifecycle = deps.rewarded.captureLoad();
   void Promise.resolve()
     .then(() => plugin.YandexAds.prepareRewarded({
       adUnitId: getConfig().rewarded,

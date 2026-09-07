@@ -18,3 +18,8 @@ export function createAdLifecycle() {
     rewardEarned() {},
   };
 }
+
+// QA provider switching never starts an ad; scope behavior belongs to runtime tests.
+export function withAdAttemptScopes(createLifecycle, options) {
+  return createLifecycle(options);
+}

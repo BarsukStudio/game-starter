@@ -40,6 +40,7 @@ export const TEMPLATE_TREES = Object.freeze({
     // lose by deleting one file.
     prerequisites: Object.freeze([
       '@barsuk/game-runtime/ad-lifecycle',
+      '@barsuk/game-runtime/ad-attempt-scope',
       '@barsuk/game-runtime/purchase-delivery',
       '@barsuk/game-runtime/purchase-finish',
       '@capacitor-community/admob',

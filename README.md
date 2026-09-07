@@ -76,6 +76,14 @@ template did not move, so consumers must not be repinned for this commit. Read
 the prompt from the working checkout, not from a pinned consumer's
 `node_modules`.
 
+Package `0.1.0-alpha.6` updates the ad adapters from Gym's scoped-request fix.
+Copying these template changes requires runtime `0.2.0` at
+`468a29ebfe8607631e262ede5491f807096957ab` (the `ad-attempt-scope` export).
+The game-facing contract remains `0.1.0`. Captured callbacks and Promise
+replies cannot settle a later attempt; untagged global native SDK events remain
+a transport limitation. Re-run consumer conformance, ad regression tests and
+the affected builds, then verify timeout/retry flows on device and in portals.
+
 ## Rules
 
 The full contract for contributors is in `AGENTS.md`. The short version:
