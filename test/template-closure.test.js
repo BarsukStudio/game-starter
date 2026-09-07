@@ -24,6 +24,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const templateRoot = path.join(here, '..', 'template');
 const platformRoot = path.join(templateRoot, 'platform');
 
+test('the native patch asset ships beside its runner', () => {
+  const runner = fs.readFileSync(path.join(templateRoot, 'scripts/patch-native-ad-events.mjs'), 'utf8');
+  assert.ok(runner.includes("new URL('./patches/native-ad-request-ids.patch', import.meta.url)"));
+  const patch = fs.readFileSync(path.join(templateRoot, 'scripts/patches/native-ad-request-ids.patch'), 'utf8');
+  assert.equal((patch.match(/^--- a\/node_modules\//gm) ?? []).length, 6);
+  assert.ok(patch.includes('requestId'));
+});
+
 // Node builtins are not prerequisites: every consuming game already has them,
 // and listing them would turn the declaration into an inventory of Node.
 const isBuiltin = (specifier) => specifier.startsWith('node:');

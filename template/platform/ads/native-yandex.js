@@ -1,3 +1,4 @@
+import { createNativeAdEvents } from './native-ad-events.js';
 // Yandex native ads, through the Capacitor plugin.
 //
 // Routed by a `ru*` locale (the bridge decides), so this is the ad stack a
@@ -59,7 +60,11 @@ async function showBanner(YandexAds) {
 // Returns whether the SDK came up. The bridge turns the provider off on false,
 // and decides from its own routing whether AdMob gets a turn afterwards.
 export async function init(injected) {
-  deps = injected;
+  deps = {
+    ...injected,
+    interstitial: createNativeAdEvents(injected.interstitial, () => globalThis.crypto.randomUUID()),
+    rewarded: createNativeAdEvents(injected.rewarded, () => globalThis.crypto.randomUUID()),
+  };
 
   let YandexAds;
   try {
@@ -90,7 +95,7 @@ export async function init(injected) {
       ),
       YandexAds.addListener(
         'rewardedShown',
-        () => deps.rewarded.showStarted(),
+        (payload) => deps.rewarded.showStarted(payload),
       ),
       YandexAds.addListener(
         'rewardedFailedToShow',
@@ -110,7 +115,7 @@ export async function init(injected) {
       ),
       YandexAds.addListener(
         'interstitialShown',
-        () => deps.interstitial.showStarted(),
+        (payload) => deps.interstitial.showStarted(payload),
       ),
       YandexAds.addListener(
         'interstitialFailedToShow',
@@ -118,7 +123,7 @@ export async function init(injected) {
       ),
       YandexAds.addListener(
         'interstitialDismissed',
-        () => deps.interstitial.showClosed(),
+        (payload) => deps.interstitial.showClosed(payload),
       ),
       YandexAds.addListener('bannerLoaded', () => debugLog('YandexAds banner loaded')),
       YandexAds.addListener(
@@ -147,7 +152,7 @@ export async function showInterstitial() {
     lifecycle.showFailed(new Error('Yandex interstitial API is unavailable'));
     return false;
   }
-  const result = await plugin.YandexAds.showInterstitial();
+  const result = await plugin.YandexAds.showInterstitial({ requestId: lifecycle.requestId });
   if (result?.presented !== true) {
     lifecycle.showFailed(new Error('Yandex interstitial failed to present'));
     return false;
@@ -165,7 +170,7 @@ export async function showRewarded() {
     lifecycle.showFailed(new Error('Yandex rewarded API is unavailable'));
     return false;
   }
-  const result = await plugin.YandexAds.showRewarded();
+  const result = await plugin.YandexAds.showRewarded({ requestId: lifecycle.requestId });
   if (result?.presented !== true) {
     lifecycle.showFailed(new Error('Yandex rewarded ad failed to present'));
     return false;
@@ -186,6 +191,7 @@ export function preloadInterstitial() {
   void Promise.resolve()
     .then(() => plugin.YandexAds.prepareInterstitial({
       adUnitId: getConfig().interstitial,
+      requestId: lifecycle.requestId,
     }))
     .then((payload) => lifecycle.loadSucceeded(payload))
     .catch((error) => {
@@ -199,6 +205,7 @@ export function preloadRewarded() {
   void Promise.resolve()
     .then(() => plugin.YandexAds.prepareRewarded({
       adUnitId: getConfig().rewarded,
+      requestId: lifecycle.requestId,
     }))
     .then((payload) => lifecycle.loadSucceeded(payload))
     .catch((error) => {

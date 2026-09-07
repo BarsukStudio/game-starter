@@ -1,0 +1,581 @@
+--- a/node_modules/@capacitor-community/admob/android/src/main/java/com/getcapacitor/community/admob/interstitial/AdInterstitialExecutor.java
++++ b/node_modules/@capacitor-community/admob/android/src/main/java/com/getcapacitor/community/admob/interstitial/AdInterstitialExecutor.java
+@@ -35,7 +35,13 @@
+         this.adCallbackAndListeners = adCallbackAndListeners;
+     }
+ 
+-    public void prepareInterstitial(final PluginCall call, BiConsumer<String, JSObject> notifyListenersFunction) {
++    public void prepareInterstitial(final PluginCall call, BiConsumer<String, JSObject> baseNotifier) {
++        // Capture the issuing request, never the most recent JS show/load.
++        final String requestId = call.getString("requestId", "");
++        final BiConsumer<String, JSObject> notifyListenersFunction = (event, payload) -> {
++            payload.put("requestId", requestId);
++            baseNotifier.accept(event, payload);
++        };
+         final AdOptions.AdOptionsFactory factory = AdOptions.getFactory();
+         final AdOptions adOptions = factory.createInterstitialOptions(call);
+ 
+@@ -57,7 +63,13 @@
+         }
+     }
+ 
+-    public void showInterstitial(final PluginCall call, BiConsumer<String, JSObject> notifyListenersFunction) {
++    public void showInterstitial(final PluginCall call, BiConsumer<String, JSObject> baseNotifier) {
++        // Capture the issuing request, never the most recent JS show/load.
++        final String requestId = call.getString("requestId", "");
++        final BiConsumer<String, JSObject> notifyListenersFunction = (event, payload) -> {
++            payload.put("requestId", requestId);
++            baseNotifier.accept(event, payload);
++        };
+         String requestedAdId = call.getString("adId");
+         String adId = requestedAdId != null ? requestedAdId : lastPreparedAdId;
+         InterstitialAd ad = adId != null ? preparedAds.get(adId) : null;
+@@ -77,6 +89,7 @@
+                 try {
+                     adToShow.setFullScreenContentCallback(
+                         new FullscreenPluginCallback(InterstitialAdPluginPluginEvent.INSTANCE, notifyListenersFunction, () -> {
++                            if (preparedAds.get(adId) != adToShow) return;
+                             preparedAds.remove(adId);
+                             if (adId != null && adId.equals(lastPreparedAdId)) {
+                                 lastPreparedAdId = null;
+--- a/node_modules/@capacitor-community/admob/android/src/main/java/com/getcapacitor/community/admob/rewarded/AdRewardExecutor.java
++++ b/node_modules/@capacitor-community/admob/android/src/main/java/com/getcapacitor/community/admob/rewarded/AdRewardExecutor.java
+@@ -33,7 +33,13 @@
+     }
+ 
+     @PluginMethod
+-    public void prepareRewardVideoAd(final PluginCall call, BiConsumer<String, JSObject> notifyListenersFunction) {
++    public void prepareRewardVideoAd(final PluginCall call, BiConsumer<String, JSObject> baseNotifier) {
++        // Capture the issuing request, never the most recent JS show/load.
++        final String requestId = call.getString("requestId", "");
++        final BiConsumer<String, JSObject> notifyListenersFunction = (event, payload) -> {
++            payload.put("requestId", requestId);
++            baseNotifier.accept(event, payload);
++        };
+         final AdOptions adOptions = AdOptions.getFactory().createRewardVideoOptions(call);
+ 
+         activitySupplier
+@@ -55,7 +61,13 @@
+     }
+ 
+     @PluginMethod
+-    public void showRewardVideoAd(final PluginCall call, BiConsumer<String, JSObject> notifyListenersFunction) {
++    public void showRewardVideoAd(final PluginCall call, BiConsumer<String, JSObject> baseNotifier) {
++        // Capture the issuing request, never the most recent JS show/load.
++        final String requestId = call.getString("requestId", "");
++        final BiConsumer<String, JSObject> notifyListenersFunction = (event, payload) -> {
++            payload.put("requestId", requestId);
++            baseNotifier.accept(event, payload);
++        };
+         String requestedAdId = call.getString("adId");
+         String adId = requestedAdId != null ? requestedAdId : lastPreparedAdId;
+         RewardedAd ad = adId != null ? preparedAds.get(adId) : null;
+@@ -74,6 +86,7 @@
+                 .runOnUiThread(() -> {
+                     ad.setFullScreenContentCallback(
+                         new FullscreenPluginCallback(RewardAdPluginEvents.INSTANCE, notifyListenersFunction, () -> {
++                            if (preparedAds.get(adId) != ad) return;
+                             preparedAds.remove(adId);
+                             if (adId != null && adId.equals(lastPreparedAdId)) {
+                                 lastPreparedAdId = null;
+--- a/node_modules/@capacitor-community/admob/ios/Sources/AdMobPlugin/Interstitial/AdInterstitialExecutor.swift
++++ b/node_modules/@capacitor-community/admob/ios/Sources/AdMobPlugin/Interstitial/AdInterstitialExecutor.swift
+@@ -7,6 +7,14 @@
+     private var preparedAds: [String: InterstitialAd] = [:]
+     private var lastPreparedAdId: String?
+     private var currentlyShowingAdId: String?
++    private var showingObjectId: ObjectIdentifier?
++    private var requestIds: [ObjectIdentifier: String] = [:]
++
++    private func notifyRequest(_ event: String, requestId: String, data: [String: Any]) {
++        var payload = data
++        payload["requestId"] = requestId
++        plugin?.notifyListeners(event, data: payload)
++    }
+ 
+     func prepareInterstitial(_ call: CAPPluginCall, _ request: Request, _ adUnitID: String) {
+         InterstitialAd.load(
+@@ -15,7 +23,7 @@
+             completionHandler: { (ad, error) in
+                 if let error = error {
+                     NSLog("Interstitial ad failed to load with error: \(error.localizedDescription)")
+-                    self.plugin?.notifyListeners(InterstitialAdPluginEvents.FailedToLoad.rawValue, data: [
++                    self.notifyRequest(InterstitialAdPluginEvents.FailedToLoad.rawValue, requestId: call.getString("requestId") ?? "", data: [
+                         "code": 0,
+                         "message": error.localizedDescription
+                     ])
+@@ -28,7 +36,7 @@
+                     ad.paidEventHandler = { adValue in
+                         let networkName = ad.responseInfo.loadedAdNetworkResponseInfo?.adNetworkClassName ?? ""
+                         let impressionId = ad.responseInfo.responseIdentifier ?? ""
+-                        self.plugin?.notifyListeners(InterstitialAdPluginEvents.AdImpression.rawValue, data: [
++                        self.notifyRequest(InterstitialAdPluginEvents.AdImpression.rawValue, requestId: call.getString("requestId") ?? "", data: [
+                             "adUnitId": adUnitID,
+                             "valueMicros": adValue.value.int64Value,
+                             "currencyCode": adValue.currencyCode,
+@@ -40,7 +48,7 @@
+                     self.preparedAds[adUnitID] = ad
+                     self.lastPreparedAdId = adUnitID
+                 }
+-                self.plugin?.notifyListeners(InterstitialAdPluginEvents.Loaded.rawValue, data: [
++                self.notifyRequest(InterstitialAdPluginEvents.Loaded.rawValue, requestId: call.getString("requestId") ?? "", data: [
+                     "adUnitId": adUnitID
+                 ])
+                 call.resolve([
+@@ -63,6 +71,8 @@
+         if let rootViewController = plugin?.getRootVC() {
+             if let ad = preparedAds[adId] {
+                 currentlyShowingAdId = adId
++                showingObjectId = ObjectIdentifier(ad)
++                requestIds[ObjectIdentifier(ad)] = call.getString("requestId") ?? ""
+                 ad.present(from: rootViewController)
+                 call.resolve([:])
+             } else {
+@@ -73,28 +83,37 @@
+     }
+ 
+     func ad(_ ad: FullScreenPresentingAd, didFailToPresentFullScreenContentWithError error: Error) {
+-        removeCurrentlyShowingAd()
++        let requestId = requestIds[ObjectIdentifier(ad as AnyObject)] ?? ""
++        removeCurrentlyShowingAd(ad)
+         NSLog("InterstitialFullScreenDelegate Ad failed to present full screen content with error \(error.localizedDescription).")
+-        self.plugin?.notifyListeners(InterstitialAdPluginEvents.FailedToShow.rawValue, data: [
++        self.notifyRequest(InterstitialAdPluginEvents.FailedToShow.rawValue, requestId: requestId, data: [
+             "code": 0,
+             "message": error.localizedDescription
+         ])
+     }
+ 
+     func adWillPresentFullScreenContent(_ ad: FullScreenPresentingAd) {
++        let requestId = requestIds[ObjectIdentifier(ad as AnyObject)] ?? ""
+         NSLog("InterstitialFullScreenDelegate Ad did present full screen content.")
+-        self.plugin?.notifyListeners(InterstitialAdPluginEvents.Showed.rawValue, data: [:])
++        self.notifyRequest(InterstitialAdPluginEvents.Showed.rawValue, requestId: requestId, data: [:])
+     }
+ 
+     func adDidDismissFullScreenContent(_ ad: FullScreenPresentingAd) {
+-        removeCurrentlyShowingAd()
++        let requestId = requestIds[ObjectIdentifier(ad as AnyObject)] ?? ""
++        removeCurrentlyShowingAd(ad)
+         NSLog("InterstitialFullScreenDelegate Ad did dismiss full screen content.")
+-        self.plugin?.notifyListeners(InterstitialAdPluginEvents.Dismissed.rawValue, data: [:])
++        self.notifyRequest(InterstitialAdPluginEvents.Dismissed.rawValue, requestId: requestId, data: [:])
+     }
+ 
+-    private func removeCurrentlyShowingAd() {
++    private func removeCurrentlyShowingAd(_ ad: FullScreenPresentingAd) {
++        let objectId = ObjectIdentifier(ad as AnyObject)
++        requestIds.removeValue(forKey: objectId)
++        guard showingObjectId == objectId else { return }
++        showingObjectId = nil
+         guard let adId = currentlyShowingAdId else { return }
+-        preparedAds.removeValue(forKey: adId)
++        if let prepared = preparedAds[adId], ObjectIdentifier(prepared) == objectId {
++            preparedAds.removeValue(forKey: adId)
++        }
+         if lastPreparedAdId == adId { lastPreparedAdId = Array(preparedAds.keys).last }
+         currentlyShowingAdId = nil
+     }
+--- a/node_modules/@capacitor-community/admob/ios/Sources/AdMobPlugin/Rewarded/AdRewardExecutor.swift
++++ b/node_modules/@capacitor-community/admob/ios/Sources/AdMobPlugin/Rewarded/AdRewardExecutor.swift
+@@ -7,6 +7,14 @@
+     private var preparedAds: [String: RewardedAd] = [:]
+     private var lastPreparedAdId: String?
+     private var currentlyShowingAdId: String?
++    private var showingObjectId: ObjectIdentifier?
++    private var requestIds: [ObjectIdentifier: String] = [:]
++
++    private func notifyRequest(_ event: String, requestId: String, data: [String: Any]) {
++        var payload = data
++        payload["requestId"] = requestId
++        plugin?.notifyListeners(event, data: payload)
++    }
+ 
+     func prepareRewardVideoAd(_ call: CAPPluginCall, _ request: Request, _ adUnitID: String) {
+         RewardedAd.load(
+@@ -15,7 +23,7 @@
+             completionHandler: { (ad, error) in
+                 if let error = error {
+                     NSLog("Rewarded ad failed to load with error: \(error.localizedDescription)")
+-                    self.plugin?.notifyListeners(RewardAdPluginEvents.FailedToLoad.rawValue, data: [
++                    self.notifyRequest(RewardAdPluginEvents.FailedToLoad.rawValue, requestId: call.getString("requestId") ?? "", data: [
+                         "code": 0,
+                         "message": error.localizedDescription
+                     ])
+@@ -48,7 +56,7 @@
+                 ad.paidEventHandler = { adValue in
+                     let networkName = ad.responseInfo.loadedAdNetworkResponseInfo?.adNetworkClassName ?? ""
+                     let impressionId = ad.responseInfo.responseIdentifier ?? ""
+-                    self.plugin?.notifyListeners(RewardAdPluginEvents.AdImpression.rawValue, data: [
++                    self.notifyRequest(RewardAdPluginEvents.AdImpression.rawValue, requestId: call.getString("requestId") ?? "", data: [
+                         "adUnitId": adUnitID,
+                         "valueMicros": adValue.value.int64Value,
+                         "currencyCode": adValue.currencyCode,
+@@ -60,7 +68,7 @@
+                 self.preparedAds[adUnitID] = ad
+                 self.lastPreparedAdId = adUnitID
+ 
+-                self.plugin?.notifyListeners(RewardAdPluginEvents.Loaded.rawValue, data: [
++                self.notifyRequest(RewardAdPluginEvents.Loaded.rawValue, requestId: call.getString("requestId") ?? "", data: [
+                     "adUnitId": adUnitID
+                 ])
+                 call.resolve([
+@@ -83,10 +91,12 @@
+         if let rootViewController = plugin?.getRootVC() {
+             if let ad = preparedAds[adId] {
+                 currentlyShowingAdId = adId
++                showingObjectId = ObjectIdentifier(ad)
++                requestIds[ObjectIdentifier(ad)] = call.getString("requestId") ?? ""
+                 ad.present(from: rootViewController,
+                            userDidEarnRewardHandler: {
+                             let reward = ad.adReward
+-                            self.plugin?.notifyListeners(RewardAdPluginEvents.Rewarded.rawValue, data: ["type": reward.type, "amount": reward.amount])
++                            self.notifyRequest(RewardAdPluginEvents.Rewarded.rawValue, requestId: call.getString("requestId") ?? "", data: ["type": reward.type, "amount": reward.amount])
+                             call.resolve(["type": reward.type, "amount": reward.amount])
+                            }
+                 )
+@@ -97,28 +107,37 @@
+     }
+ 
+     func ad(_ ad: FullScreenPresentingAd, didFailToPresentFullScreenContentWithError error: Error) {
+-        removeCurrentlyShowingAd()
++        let requestId = requestIds[ObjectIdentifier(ad as AnyObject)] ?? ""
++        removeCurrentlyShowingAd(ad)
+         NSLog("RewardFullScreenDelegate Ad failed to present full screen content with error \(error.localizedDescription).")
+-        self.plugin?.notifyListeners(RewardAdPluginEvents.FailedToShow.rawValue, data: [
++        self.notifyRequest(RewardAdPluginEvents.FailedToShow.rawValue, requestId: requestId, data: [
+             "code": 0,
+             "message": error.localizedDescription
+         ])
+     }
+ 
+     func adWillPresentFullScreenContent(_ ad: FullScreenPresentingAd) {
++        let requestId = requestIds[ObjectIdentifier(ad as AnyObject)] ?? ""
+         NSLog("RewardFullScreenDelegate Ad did present full screen content.")
+-        self.plugin?.notifyListeners(RewardAdPluginEvents.Showed.rawValue, data: [:])
++        self.notifyRequest(RewardAdPluginEvents.Showed.rawValue, requestId: requestId, data: [:])
+     }
+ 
+     func adDidDismissFullScreenContent(_ ad: FullScreenPresentingAd) {
+-        removeCurrentlyShowingAd()
++        let requestId = requestIds[ObjectIdentifier(ad as AnyObject)] ?? ""
++        removeCurrentlyShowingAd(ad)
+         NSLog("RewardFullScreenDelegate Ad did dismiss full screen content.")
+-        self.plugin?.notifyListeners(RewardAdPluginEvents.Dismissed.rawValue, data: [:])
++        self.notifyRequest(RewardAdPluginEvents.Dismissed.rawValue, requestId: requestId, data: [:])
+     }
+ 
+-    private func removeCurrentlyShowingAd() {
++    private func removeCurrentlyShowingAd(_ ad: FullScreenPresentingAd) {
++        let objectId = ObjectIdentifier(ad as AnyObject)
++        requestIds.removeValue(forKey: objectId)
++        guard showingObjectId == objectId else { return }
++        showingObjectId = nil
+         guard let adId = currentlyShowingAdId else { return }
+-        preparedAds.removeValue(forKey: adId)
++        if let prepared = preparedAds[adId], ObjectIdentifier(prepared) == objectId {
++            preparedAds.removeValue(forKey: adId)
++        }
+         if lastPreparedAdId == adId { lastPreparedAdId = Array(preparedAds.keys).last }
+         currentlyShowingAdId = nil
+     }
+--- a/node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt
++++ b/node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt
+@@ -147,6 +147,11 @@
+ 
+     @PluginMethod
+     fun prepareInterstitial(call: PluginCall) = runOnMainThread {
++        val requestId = call.getString("requestId") ?: ""
++        fun notifyRequest(event: String, payload: JSObject) {
++            payload.put("requestId", requestId)
++            notifyListeners(event, payload)
++        }
+         val adUnitId = requireAdUnitId(call) ?: return@runOnMainThread
+         if (!requireInitialized(call)) return@runOnMainThread
+         if (interstitialLoadCall != null) {
+@@ -165,16 +170,18 @@
+         val request = AdRequest.Builder(adUnitId).build()
+         interstitialAdLoader?.loadAd(request, object : InterstitialAdLoadListener {
+             override fun onAdLoaded(interstitialAd: InterstitialAd) {
++                if (interstitialLoadCall !== call) return
+                 this@YandexAdsPlugin.interstitialAd = interstitialAd
+-                notifyListeners("interstitialLoaded", adEvent(interstitialAdUnitId))
+-                interstitialLoadCall?.resolve()
++                notifyRequest("interstitialLoaded", adEvent(interstitialAdUnitId))
++                call.resolve()
+                 interstitialLoadCall = null
+             }
+ 
+             override fun onAdFailedToLoad(error: AdRequestError) {
++                if (interstitialLoadCall !== call) return
+                 val event = errorEvent(interstitialAdUnitId, error.code, error.description)
+-                notifyListeners("interstitialFailedToLoad", event)
+-                interstitialLoadCall?.reject(error.description, "INTERSTITIAL_LOAD_FAILED")
++                notifyRequest("interstitialFailedToLoad", event)
++                call.reject(error.description, "INTERSTITIAL_LOAD_FAILED")
+                 interstitialLoadCall = null
+             }
+         })
+@@ -187,6 +194,11 @@
+ 
+     @PluginMethod
+     fun showInterstitial(call: PluginCall) = runOnMainThread {
++        val requestId = call.getString("requestId") ?: ""
++        fun notifyRequest(event: String, payload: JSObject) {
++            payload.put("requestId", requestId)
++            notifyListeners(event, payload)
++        }
+         val ad = interstitialAd
+         val currentActivity = activity
+         if (ad == null) {
+@@ -204,19 +216,21 @@
+ 
+         interstitialShowCall = call
+         ad.setAdEventListener(object : InterstitialAdEventListener {
+-            override fun onAdShown() = notifyListeners("interstitialShown", adEvent(interstitialAdUnitId))
+-            override fun onAdClicked() = notifyListeners("interstitialClicked", adEvent(interstitialAdUnitId))
+-            override fun onAdImpression(impressionData: ImpressionData?) = notifyListeners("interstitialImpression", adEvent(interstitialAdUnitId))
++            override fun onAdShown() = notifyRequest("interstitialShown", adEvent(interstitialAdUnitId))
++            override fun onAdClicked() = notifyRequest("interstitialClicked", adEvent(interstitialAdUnitId))
++            override fun onAdImpression(impressionData: ImpressionData?) = notifyRequest("interstitialImpression", adEvent(interstitialAdUnitId))
+             override fun onAdDismissed() {
+-                notifyListeners("interstitialDismissed", adEvent(interstitialAdUnitId))
+-                interstitialShowCall?.resolve(JSObject().put("presented", true))
++                if (interstitialShowCall !== call) return
++                notifyRequest("interstitialDismissed", adEvent(interstitialAdUnitId))
++                call.resolve(JSObject().put("presented", true))
+                 interstitialShowCall = null
+                 destroyInterstitialAd()
+             }
+ 
+             override fun onAdFailedToShow(adError: AdError) {
+-                notifyListeners("interstitialFailedToShow", errorEvent(interstitialAdUnitId, null, adError.description))
+-                interstitialShowCall?.reject(adError.description, "INTERSTITIAL_SHOW_FAILED")
++                if (interstitialShowCall !== call) return
++                notifyRequest("interstitialFailedToShow", errorEvent(interstitialAdUnitId, null, adError.description))
++                call.reject(adError.description, "INTERSTITIAL_SHOW_FAILED")
+                 interstitialShowCall = null
+                 destroyInterstitialAd()
+             }
+@@ -226,6 +240,11 @@
+ 
+     @PluginMethod
+     fun prepareRewarded(call: PluginCall) = runOnMainThread {
++        val requestId = call.getString("requestId") ?: ""
++        fun notifyRequest(event: String, payload: JSObject) {
++            payload.put("requestId", requestId)
++            notifyListeners(event, payload)
++        }
+         val adUnitId = requireAdUnitId(call) ?: return@runOnMainThread
+         if (!requireInitialized(call)) return@runOnMainThread
+         if (rewardedLoadCall != null) {
+@@ -244,16 +263,18 @@
+         val request = AdRequest.Builder(adUnitId).build()
+         rewardedAdLoader?.loadAd(request, object : RewardedAdLoadListener {
+             override fun onAdLoaded(rewarded: RewardedAd) {
++                if (rewardedLoadCall !== call) return
+                 rewardedAd = rewarded
+-                notifyListeners("rewardedLoaded", adEvent(rewardedAdUnitId))
+-                rewardedLoadCall?.resolve()
++                notifyRequest("rewardedLoaded", adEvent(rewardedAdUnitId))
++                call.resolve()
+                 rewardedLoadCall = null
+             }
+ 
+             override fun onAdFailedToLoad(error: AdRequestError) {
++                if (rewardedLoadCall !== call) return
+                 val event = errorEvent(rewardedAdUnitId, error.code, error.description)
+-                notifyListeners("rewardedFailedToLoad", event)
+-                rewardedLoadCall?.reject(error.description, "REWARDED_LOAD_FAILED")
++                notifyRequest("rewardedFailedToLoad", event)
++                call.reject(error.description, "REWARDED_LOAD_FAILED")
+                 rewardedLoadCall = null
+             }
+         })
+@@ -266,6 +287,11 @@
+ 
+     @PluginMethod
+     fun showRewarded(call: PluginCall) = runOnMainThread {
++        val requestId = call.getString("requestId") ?: ""
++        fun notifyRequest(event: String, payload: JSObject) {
++            payload.put("requestId", requestId)
++            notifyListeners(event, payload)
++        }
+         val ad = rewardedAd
+         val currentActivity = activity
+         if (ad == null) {
+@@ -284,12 +310,13 @@
+         rewardedEarned = false
+         rewardedShowCall = call
+         ad.setAdEventListener(object : RewardedAdEventListener {
+-            override fun onAdShown() = notifyListeners("rewardedShown", adEvent(rewardedAdUnitId))
+-            override fun onAdClicked() = notifyListeners("rewardedClicked", adEvent(rewardedAdUnitId))
+-            override fun onAdImpression(impressionData: ImpressionData?) = notifyListeners("rewardedImpression", adEvent(rewardedAdUnitId))
++            override fun onAdShown() = notifyRequest("rewardedShown", adEvent(rewardedAdUnitId))
++            override fun onAdClicked() = notifyRequest("rewardedClicked", adEvent(rewardedAdUnitId))
++            override fun onAdImpression(impressionData: ImpressionData?) = notifyRequest("rewardedImpression", adEvent(rewardedAdUnitId))
+             override fun onRewarded(reward: Reward) {
++                if (rewardedShowCall !== call) return
+                 rewardedEarned = true
+-                notifyListeners("rewarded", JSObject().apply {
++                notifyRequest("rewarded", JSObject().apply {
+                     put("adUnitId", rewardedAdUnitId)
+                     put("amount", reward.amount)
+                     put("type", reward.type)
+@@ -297,8 +324,9 @@
+             }
+ 
+             override fun onAdDismissed() {
+-                notifyListeners("rewardedDismissed", adEvent(rewardedAdUnitId))
+-                rewardedShowCall?.resolve(JSObject().apply {
++                if (rewardedShowCall !== call) return
++                notifyRequest("rewardedDismissed", adEvent(rewardedAdUnitId))
++                call.resolve(JSObject().apply {
+                     put("presented", true)
+                     put("rewarded", rewardedEarned)
+                 })
+@@ -308,8 +336,9 @@
+             }
+ 
+             override fun onAdFailedToShow(adError: AdError) {
+-                notifyListeners("rewardedFailedToShow", errorEvent(rewardedAdUnitId, null, adError.description))
+-                rewardedShowCall?.reject(adError.description, "REWARDED_SHOW_FAILED")
++                if (rewardedShowCall !== call) return
++                notifyRequest("rewardedFailedToShow", errorEvent(rewardedAdUnitId, null, adError.description))
++                call.reject(adError.description, "REWARDED_SHOW_FAILED")
+                 rewardedShowCall = null
+                 rewardedEarned = false
+                 destroyRewardedAd()
+--- a/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift
++++ b/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift
+@@ -142,10 +142,10 @@
+             case .success(let ad):
+                 self.interstitialAd = ad
+                 ad.delegate = self
+-                self.notifyListeners("interstitialLoaded", data: self.adEvent(adUnitID))
++                self.notifyRequest("interstitialLoaded", call: call, data: self.adEvent(adUnitID))
+                 call.resolve()
+             case .failure(let error):
+-                self.notifyListeners("interstitialFailedToLoad", data: self.errorEvent(adUnitID, error))
++                self.notifyRequest("interstitialFailedToLoad", call: call, data: self.errorEvent(adUnitID, error))
+                 self.reject(call, error: error, code: "INTERSTITIAL_LOAD_FAILED")
+             }
+         }
+@@ -203,10 +203,10 @@
+             case .success(let ad):
+                 self.rewardedAd = ad
+                 ad.delegate = self
+-                self.notifyListeners("rewardedLoaded", data: self.adEvent(adUnitID))
++                self.notifyRequest("rewardedLoaded", call: call, data: self.adEvent(adUnitID))
+                 call.resolve()
+             case .failure(let error):
+-                self.notifyListeners("rewardedFailedToLoad", data: self.errorEvent(adUnitID, error))
++                self.notifyRequest("rewardedFailedToLoad", call: call, data: self.errorEvent(adUnitID, error))
+                 self.reject(call, error: error, code: "REWARDED_LOAD_FAILED")
+             }
+         }
+@@ -263,6 +263,12 @@
+             return nil
+         }
+         return value
++    }
++
++    @MainActor private func notifyRequest(_ event: String, call: CAPPluginCall, data: [String: Any]) {
++        var payload = data
++        payload["requestId"] = call.getString("requestId") ?? ""
++        notifyListeners(event, data: payload)
+     }
+ 
+     @MainActor private func adEvent(_ adUnitID: String) -> [String: Any] {
+@@ -330,27 +336,32 @@
+ 
+ @MainActor extension YandexAdsPlugin: InterstitialAdDelegate {
+     public func interstitialAdDidShow(_ interstitialAd: InterstitialAd) {
+-        notifyListeners("interstitialShown", data: adEvent(interstitialAdUnitID))
++        guard self.interstitialAd === interstitialAd, let call = interstitialShowCall else { return }
++        notifyRequest("interstitialShown", call: call, data: adEvent(interstitialAdUnitID))
+     }
+ 
+     public func interstitialAdDidDismiss(_ interstitialAd: InterstitialAd) {
+-        notifyListeners("interstitialDismissed", data: adEvent(interstitialAdUnitID))
+-        interstitialShowCall?.resolve(["presented": true])
++        guard self.interstitialAd === interstitialAd, let call = interstitialShowCall else { return }
++        notifyRequest("interstitialDismissed", call: call, data: adEvent(interstitialAdUnitID))
++        call.resolve(["presented": true])
+         interstitialShowCall = nil
+         destroyInterstitialAd()
+     }
+ 
+     public func interstitialAdDidClick(_ interstitialAd: InterstitialAd) {
+-        notifyListeners("interstitialClicked", data: adEvent(interstitialAdUnitID))
++        guard self.interstitialAd === interstitialAd, let call = interstitialShowCall else { return }
++        notifyRequest("interstitialClicked", call: call, data: adEvent(interstitialAdUnitID))
+     }
+ 
+     public func interstitialAd(_ interstitialAd: InterstitialAd, didTrackImpression impressionData: ImpressionData?) {
+-        notifyListeners("interstitialImpression", data: adEvent(interstitialAdUnitID))
++        guard self.interstitialAd === interstitialAd, let call = interstitialShowCall else { return }
++        notifyRequest("interstitialImpression", call: call, data: adEvent(interstitialAdUnitID))
+     }
+ 
+     public func interstitialAd(_ interstitialAd: InterstitialAd, didFailToShow error: Error) {
+-        notifyListeners("interstitialFailedToShow", data: errorEvent(interstitialAdUnitID, error))
+-        interstitialShowCall?.reject((error as NSError).localizedDescription, "INTERSTITIAL_SHOW_FAILED", error)
++        guard self.interstitialAd === interstitialAd, let call = interstitialShowCall else { return }
++        notifyRequest("interstitialFailedToShow", call: call, data: errorEvent(interstitialAdUnitID, error))
++        call.reject((error as NSError).localizedDescription, "INTERSTITIAL_SHOW_FAILED", error)
+         interstitialShowCall = nil
+         destroyInterstitialAd()
+     }
+@@ -358,28 +369,33 @@
+ 
+ @MainActor extension YandexAdsPlugin: RewardedAdDelegate {
+     public func rewardedAdDidShow(_ rewardedAd: RewardedAd) {
+-        notifyListeners("rewardedShown", data: adEvent(rewardedAdUnitID))
++        guard self.rewardedAd === rewardedAd, let call = rewardedShowCall else { return }
++        notifyRequest("rewardedShown", call: call, data: adEvent(rewardedAdUnitID))
+     }
+ 
+     public func rewardedAdDidDismiss(_ rewardedAd: RewardedAd) {
+-        notifyListeners("rewardedDismissed", data: adEvent(rewardedAdUnitID))
+-        rewardedShowCall?.resolve(["presented": true, "rewarded": rewardedEarned])
++        guard self.rewardedAd === rewardedAd, let call = rewardedShowCall else { return }
++        notifyRequest("rewardedDismissed", call: call, data: adEvent(rewardedAdUnitID))
++        call.resolve(["presented": true, "rewarded": rewardedEarned])
+         rewardedShowCall = nil
+         rewardedEarned = false
+         destroyRewardedAd()
+     }
+ 
+     public func rewardedAdDidClick(_ rewardedAd: RewardedAd) {
+-        notifyListeners("rewardedClicked", data: adEvent(rewardedAdUnitID))
++        guard self.rewardedAd === rewardedAd, let call = rewardedShowCall else { return }
++        notifyRequest("rewardedClicked", call: call, data: adEvent(rewardedAdUnitID))
+     }
+ 
+     public func rewardedAd(_ rewardedAd: RewardedAd, didTrackImpression impressionData: ImpressionData?) {
+-        notifyListeners("rewardedImpression", data: adEvent(rewardedAdUnitID))
++        guard self.rewardedAd === rewardedAd, let call = rewardedShowCall else { return }
++        notifyRequest("rewardedImpression", call: call, data: adEvent(rewardedAdUnitID))
+     }
+ 
+     public func rewardedAd(_ rewardedAd: RewardedAd, didReward reward: Reward) {
++        guard self.rewardedAd === rewardedAd, let call = rewardedShowCall else { return }
+         rewardedEarned = true
+-        notifyListeners("rewarded", data: [
++        notifyRequest("rewarded", call: call, data: [
+             "adUnitId": rewardedAdUnitID,
+             "amount": reward.amount,
+             "type": reward.type
+@@ -387,8 +403,9 @@
+     }
+ 
+     public func rewardedAd(_ rewardedAd: RewardedAd, didFailToShow error: Error) {
+-        notifyListeners("rewardedFailedToShow", data: errorEvent(rewardedAdUnitID, error))
+-        rewardedShowCall?.reject((error as NSError).localizedDescription, "REWARDED_SHOW_FAILED", error)
++        guard self.rewardedAd === rewardedAd, let call = rewardedShowCall else { return }
++        notifyRequest("rewardedFailedToShow", call: call, data: errorEvent(rewardedAdUnitID, error))
++        call.reject((error as NSError).localizedDescription, "REWARDED_SHOW_FAILED", error)
+         rewardedShowCall = nil
+         rewardedEarned = false
+         destroyRewardedAd()

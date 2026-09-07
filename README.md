@@ -84,6 +84,18 @@ replies cannot settle a later attempt; untagged global native SDK events remain
 a transport limitation. Re-run consumer conformance, ad regression tests and
 the affected builds, then verify timeout/retry flows on device and in portals.
 
+Package `0.1.0-alpha.7` adds native AdMob/Yandex request identity from Gym.
+Copy `platform/ads/native-ad-events.js` and the updated native adapters together
+with `scripts/patch-native-ad-events.mjs` and
+`scripts/patches/native-ad-request-ids.patch`. Add the patch runner to both
+`postinstall` and `prebuild`; it requires the Git CLI and must run from the game
+root. `node scripts/patch-native-ad-events.mjs --check` verifies the installed
+native sources without changing them. The patch targets AdMob 8.1.0 and Yandex
+plugin commit `86d30e7000a57dd8c406900f8325d0a82f0c5700`; SDK changes must
+revalidate applicability and native builds. Untagged/mismatched events are now
+ignored, so updated JS must ship with the patched native plugins. Runtime
+remains 0.2.0 and the platform contract remains 0.1.0.
+
 ## Rules
 
 The full contract for contributors is in `AGENTS.md`. The short version:

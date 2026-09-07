@@ -1,3 +1,4 @@
+import { createNativeAdEvents } from './native-ad-events.js';
 // AdMob native ads, through the Capacitor community plugin.
 //
 // The default native ad stack: everything that is not routed to Yandex by a
@@ -55,7 +56,11 @@ export function isRewardedReady() {
 // warn and carry on, and a listener registration or preload that throws stays
 // thrown, exactly as it is today.
 export async function init(injected) {
-  deps = injected;
+  deps = {
+    ...injected,
+    interstitial: createNativeAdEvents(injected.interstitial, () => globalThis.crypto.randomUUID()),
+    rewarded: createNativeAdEvents(injected.rewarded, () => globalThis.crypto.randomUUID()),
+  };
   const config = getConfig();
 
   try {
@@ -120,7 +125,7 @@ export async function init(injected) {
     );
     AdMob.addListener(
       InterstitialAdPluginEvents.Showed,
-      () => deps.interstitial.showStarted(),
+      (payload) => deps.interstitial.showStarted(payload),
     );
     AdMob.addListener(
       InterstitialAdPluginEvents.FailedToShow,
@@ -128,7 +133,7 @@ export async function init(injected) {
     );
     AdMob.addListener(
       InterstitialAdPluginEvents.Dismissed,
-      () => deps.interstitial.showClosed(),
+      (payload) => deps.interstitial.showClosed(payload),
     );
 
     // The consent form and ATT prompt above are modal, so ownership can land
@@ -167,7 +172,7 @@ export async function init(injected) {
   );
   AdMob.addListener(
     RewardAdPluginEvents.Showed,
-    () => deps.rewarded.showStarted(),
+    (payload) => deps.rewarded.showStarted(payload),
   );
   AdMob.addListener(
     RewardAdPluginEvents.FailedToShow,
@@ -175,7 +180,7 @@ export async function init(injected) {
   );
   AdMob.addListener(
     RewardAdPluginEvents.Dismissed,
-    () => deps.rewarded.showClosed(),
+    (payload) => deps.rewarded.showClosed(payload),
   );
   AdMob.addListener(
     RewardAdPluginEvents.Rewarded,
@@ -189,7 +194,8 @@ export async function init(injected) {
 // Throws on purpose when the plugin does: the bridge's show entry point owns the
 // catch that turns it into a `showFailed`.
 export async function showInterstitial() {
-  await AdMob.showInterstitial();
+  const lifecycle = deps.interstitial.captureShow();
+  await AdMob.showInterstitial({ requestId: lifecycle.requestId });
   return true;
 }
 
@@ -200,7 +206,7 @@ export async function showRewarded() {
   // on a channel that survives a dismissal arriving first. It never
   // resolves when the player closes without a reward, so it must not be
   // awaited; both handlers are attached here instead.
-  AdMob.showRewardVideoAd().then(
+  AdMob.showRewardVideoAd({ requestId: lifecycle.requestId }).then(
     (payload) => lifecycle.rewardEarned(payload),
     (error) => lifecycle.showFailed(error),
   );
@@ -210,7 +216,7 @@ export async function showRewarded() {
 export function preloadInterstitial() {
   const lifecycle = deps.interstitial.captureLoad();
   void Promise.resolve()
-    .then(() => AdMob.prepareInterstitial(interstitialOptions))
+    .then(() => AdMob.prepareInterstitial({ ...interstitialOptions, requestId: lifecycle.requestId }))
     .catch((error) => {
       console.warn('Interstitial preload failed', error);
       lifecycle.loadFailed(error);
@@ -220,7 +226,7 @@ export function preloadInterstitial() {
 export function preloadRewarded() {
   const lifecycle = deps.rewarded.captureLoad();
   void Promise.resolve()
-    .then(() => AdMob.prepareRewardVideoAd(rewardOptions))
+    .then(() => AdMob.prepareRewardVideoAd({ ...rewardOptions, requestId: lifecycle.requestId }))
     .catch((error) => {
       console.warn('Rewarded preload failed', error);
       lifecycle.loadFailed(error);
