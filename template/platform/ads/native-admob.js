@@ -7,8 +7,7 @@ import { createNativeAdEvents } from './native-ad-events.js';
 // adapters it pulls in are wired into the Gradle/Pods setup rather than loaded
 // on demand.
 //
-// The adapter owns no provider state and has no module-scope side effect — the
-// two request option bags, the injected dependencies and nothing else. The
+// The adapter owns banner recovery and native request options. The
 // bridge owns the shared ad lifecycles and opens every operation on them
 // (`beginShow`, `beginLoad`); this file only drives the SDK and reports what it
 // answered.
@@ -29,6 +28,7 @@ import { getNativeKey } from '../env.js';
 let deps = null;
 let interstitialOptions = null;
 let rewardOptions = null;
+let stopBannerRecovery = () => {};
 
 function getConfig() {
   return {
@@ -56,6 +56,7 @@ export function isRewardedReady() {
 // warn and carry on, and a listener registration or preload that throws stays
 // thrown, exactly as it is today.
 export async function init(injected) {
+  stopBannerRecovery();
   deps = {
     ...injected,
     interstitial: createNativeAdEvents(injected.interstitial, () => globalThis.crypto.randomUUID()),
@@ -87,8 +88,12 @@ export async function init(injected) {
       return false;
     }
   } catch (error) {
-    console.warn('AdMob consent flow failed; native ads stay disabled.', error);
-    return false;
+    // The native patch reads UMP at the point of failure, never a JS cache.
+    if (error?.data?.canRequestAds !== true) {
+      console.warn('AdMob consent flow failed; native ads stay disabled.', error);
+      return false;
+    }
+    console.warn('AdMob consent update failed; UMP still permits ad requests.', error);
   }
 
   // ATT controls tracking/personalization on iOS, but it must not gate the
@@ -103,9 +108,6 @@ export async function init(injected) {
   }
 
   if (!deps.isAdsRemoved()) {
-    AdMob.addListener(BannerAdPluginEvents.Loaded, () => {
-      debugLog('Banner loaded');
-    });
     AdMob.addListener(BannerAdPluginEvents.SizeChanged, (size) => {
       debugLog('Banner size changed:', size);
     });
@@ -139,20 +141,54 @@ export async function init(injected) {
     // The consent form and ATT prompt above are modal, so ownership can land
     // mid-init. Re-read the flag instead of trusting the one checked on entry.
     if (!deps.isAdsRemoved()) {
-      try {
-        await AdMob.showBanner({
-          adId: config.banner,
-          // ADAPTIVE_BANNER, not SMART_BANNER: the latter is a fixed 320x50 on
-          // phones whatever the screen width, and nothing downstream reports the
-          // difference — AdMob serves both. Adaptive sizes to the container.
-          adSize: BannerAdSize.ADAPTIVE_BANNER,
-          position: BannerAdPosition.BOTTOM_CENTER,
-          margin: 0,
-          isTesting: config.useSampleAds,
-        });
-      } catch (error) {
-        console.warn('AdMob banner show failed', error);
-      }
+      const bannerOptions = {
+        adId: config.banner,
+        adSize: BannerAdSize.ADAPTIVE_BANNER,
+        position: BannerAdPosition.BOTTOM_CENTER,
+        margin: 0,
+        isTesting: config.useSampleAds,
+      };
+      let active = true;
+      let retryTimer = null;
+      let failures = 0;
+      const isAdsRemoved = deps.isAdsRemoved;
+      const clearRetry = () => {
+        if (retryTimer !== null) clearTimeout(retryTimer);
+        retryTimer = null;
+      };
+      stopBannerRecovery = () => {
+        active = false;
+        clearRetry();
+      };
+      const retryBanner = (error) => {
+        if (!active || isAdsRemoved() || retryTimer !== null) return;
+        console.warn('AdMob banner load failed; scheduling retry', error);
+        const delay = 1000 * 2 ** Math.min(6, ++failures);
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          void showBanner();
+        }, delay);
+      };
+      const showBanner = async () => {
+        if (!active || isAdsRemoved()) return;
+        try {
+          await AdMob.showBanner(bannerOptions);
+        } catch (error) {
+          retryBanner(error);
+        }
+      };
+      // The plugin destroys failed banners. SDK auto-refresh cannot recover
+      // that view; re-create it, but never after ownership or provider changes.
+      await Promise.all([
+        AdMob.addListener(BannerAdPluginEvents.Loaded, () => {
+          if (!active) return;
+          clearRetry();
+          failures = 0;
+          debugLog('Banner loaded');
+        }),
+        AdMob.addListener(BannerAdPluginEvents.FailedToLoad, retryBanner),
+      ]);
+      await showBanner();
       deps.preloadInterstitial();
     }
   }
@@ -234,6 +270,7 @@ export function preloadRewarded() {
 }
 
 export function hideBanner() {
+  stopBannerRecovery();
   void Promise.resolve(AdMob.hideBanner())
     .catch((error) => console.warn('AdMob banner hide failed', error));
 }
@@ -242,5 +279,6 @@ export function hideBanner() {
 // the one left behind has to go before the new provider draws its own. Nothing
 // to load here — unlike the Yandex plugin this one is always present.
 export function removeBanner() {
+  stopBannerRecovery();
   return AdMob.removeBanner();
 }

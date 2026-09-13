@@ -1,0 +1,50 @@
+--- a/node_modules/@capacitor-community/admob/android/src/main/java/com/getcapacitor/community/admob/consent/AdConsentExecutor.java
++++ b/node_modules/@capacitor-community/admob/android/src/main/java/com/getcapacitor/community/admob/consent/AdConsentExecutor.java
+@@ -71,7 +71,11 @@
+                     consentInfo.put("privacyOptionsRequirementStatus", consentInformation.getPrivacyOptionsRequirementStatus().name());
+                     call.resolve(consentInfo);
+                 },
+-                (formError) -> call.reject(formError.getMessage())
++                (formError) -> {
++                    JSObject details = new JSObject();
++                    details.put("canRequestAds", consentInformation.canRequestAds());
++                    call.reject(formError.getMessage(), details);
++                }
+             );
+         } catch (Exception ex) {
+             call.reject(ex.getLocalizedMessage(), ex);
+@@ -114,7 +118,9 @@
+             activity.runOnUiThread(() ->
+                 UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity, (formError) -> {
+                     if (formError != null) {
+-                        call.reject("Error when show consent form", formError.getMessage());
++                        JSObject details = new JSObject();
++                        details.put("canRequestAds", consentInformation.canRequestAds());
++                        call.reject("Error when show consent form", formError.getMessage(), details);
+                         return;
+                     }
+ 
+--- a/node_modules/@capacitor-community/admob/ios/Sources/AdMobPlugin/Consent/ConsentExecutor.swift
++++ b/node_modules/@capacitor-community/admob/ios/Sources/AdMobPlugin/Consent/ConsentExecutor.swift
+@@ -21,7 +21,9 @@
+             with: parameters,
+             completionHandler: { error in
+                 if error != nil {
+-                    call.reject("Request consent info failed")
++                    call.reject("Request consent info failed", nil, error, [
++                        "canRequestAds": ConsentInformation.shared.canRequestAds
++                    ])
+                 } else {
+                     call.resolve([
+                         "status": self.getConsentStatusString(ConsentInformation.shared.consentStatus),
+@@ -64,7 +66,9 @@
+                             "privacyOptionsRequirementStatus": self.getPrivacyOptionsRequirementStatus(ConsentInformation.shared.privacyOptionsRequirementStatus)
+                         ])
+                     } catch {
+-                        call.reject("Request consent info failed")
++                        call.reject("Request consent info failed", nil, error, [
++                            "canRequestAds": ConsentInformation.shared.canRequestAds
++                        ])
+                     }
+                 }
+             } else {

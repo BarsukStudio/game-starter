@@ -30,6 +30,11 @@ test('the native patch asset ships beside its runner', () => {
   const patch = fs.readFileSync(path.join(templateRoot, 'scripts/patches/native-ad-request-ids.patch'), 'utf8');
   assert.equal((patch.match(/^--- a\/node_modules\//gm) ?? []).length, 6);
   assert.ok(patch.includes('requestId'));
+  assert.ok(runner.includes("new URL('./patches/native-ad-consent-errors.patch', import.meta.url)"));
+  const consentPatch = fs.readFileSync(path.join(templateRoot, 'scripts/patches/native-ad-consent-errors.patch'), 'utf8');
+  assert.equal((consentPatch.match(/^--- a\/node_modules\//gm) ?? []).length, 2);
+  assert.ok(consentPatch.includes('consentInformation.canRequestAds()'));
+  assert.ok(consentPatch.includes('ConsentInformation.shared.canRequestAds'));
 });
 
 // Node builtins are not prerequisites: every consuming game already has them,
