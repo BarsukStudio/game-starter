@@ -14,11 +14,14 @@
     "./contract/cases": "./contract/cases/index.mjs",
     "./template/config-schema": "./template/schemas/config.schema.js",
     "./template/build-config-schema": "./template/schemas/build.config.schema.mjs",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./template/plugins-manifest": "./template/plugins-manifest.json"
   },
   "files": [
     "contract",
-    "template"
+    "template",
+    "tools",
+    "PLUGINS.md"
   ],
   "scripts": {
     "test": "node --test"
@@ -27,5 +30,8 @@
     "type": "git",
     "url": "git+https://github.com/BarsukStudio/game-starter.git"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "bin": {
+    "barsuk-verify-plugins": "./tools/verify-plugin-setup.mjs"
+  }
 }

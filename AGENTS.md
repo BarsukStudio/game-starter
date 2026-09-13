@@ -102,6 +102,14 @@ The repository is public so the archive URL resolves without credentials;
 `private: true` stays, because the package is consumed by SHA and never from the
 registry. A tag names a proven commit — it is not an install target.
 
+## Plugin setup
+
+Read [PLUGINS.md](PLUGINS.md) before installing or updating SDKs. Versions live
+only in `template/plugins-manifest.json`; do not install latest. Keep the verifier
+and its negative tests aligned with the documented setup. The verifier is shipped
+as a package tool, not copied into each game. Existing games are not upgraded
+automatically when this reference baseline changes.
+
 ## Style
 
 ES modules, semicolons, single quotes, trailing commas in multiline structures,

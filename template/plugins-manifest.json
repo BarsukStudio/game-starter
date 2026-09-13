@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "baselineDate": "2026-09-13",
+  "evidence": "Reference package set used by local Android and unsigned iOS Debug builds. Device, Firebase console and store acceptance remain separate.",
+  "platform": {
+    "dependencies": {
+      "@barsuk/game-runtime": "https://github.com/BarsukStudio/game-runtime/archive/468a29ebfe8607631e262ede5491f807096957ab.tar.gz",
+      "@capacitor/core": "8.5.1",
+      "@capacitor/app": "8.1.1",
+      "@capacitor/splash-screen": "8.0.2",
+      "@capacitor-community/admob": "8.1.0",
+      "capacitor-plugin-yandex-ads": "https://github.com/BarsukStudio/capacitor-plugin-yandex-ads/archive/86d30e7000a57dd8c406900f8325d0a82f0c5700.tar.gz",
+      "capacitor-plugin-cdv-purchase": "13.18.0"
+    },
+    "devDependencies": { "vite": "8.2.2" }
+  },
+  "android": {
+    "dependencies": { "@capacitor/android": "8.5.1" },
+    "devDependencies": { "@capacitor/cli": "8.5.1" },
+    "classpaths": {
+      "com.android.tools.build:gradle": "8.13.0",
+      "com.google.gms:google-services": "4.4.4",
+      "org.jetbrains.kotlin:kotlin-gradle-plugin": "2.2.20"
+    },
+    "variables": { "minSdkVersion": 24, "compileSdkVersion": 36, "targetSdkVersion": 36 }
+  },
+  "ios": {
+    "dependencies": { "@capacitor/ios": "8.5.1" },
+    "devDependencies": { "@capacitor/cli": "8.5.1" },
+    "deploymentTarget": "15.0"
+  },
+  "diagnostics": {
+    "dependencies": {
+      "@capacitor-firebase/app": "8.5.1",
+      "@capacitor-firebase/analytics": "8.5.1",
+      "@capacitor-firebase/crashlytics": "8.5.1",
+      "@capacitor-firebase/performance": "8.5.1",
+      "firebase": "12.18.0"
+    },
+    "androidClasspaths": {
+      "com.google.firebase:firebase-crashlytics-gradle": "3.0.6",
+      "com.google.firebase:perf-plugin": "2.0.2"
+    },
+    "androidVariables": { "firebaseCrashlyticsVersion": "20.0.3", "firebasePerfVersion": "22.0.4" },
+    "iosSdkVersion": "12.18.0"
+  }
+}

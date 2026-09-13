@@ -47,6 +47,9 @@ export const TEMPLATE_TREES = Object.freeze({
       '@capacitor/app',
       '@capacitor/core',
       '@capacitor/splash-screen',
+      // Only the opt-in diagnostics module imports these.
+      '@capacitor-firebase/crashlytics',
+      '@capacitor-firebase/performance',
       'capacitor-plugin-cdv-purchase',
       'capacitor-plugin-yandex-ads',
     ]),

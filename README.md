@@ -59,6 +59,12 @@ that tries, however the substitution is dressed up.
 A case that does not apply to a consumer is skipped rather than failed: a game
 that sells nothing is not in breach of a purchase contract.
 
+## Plugin setup
+
+[PLUGINS.md](PLUGINS.md) is the installation and verification recipe for new
+consumers, including optional Firebase diagnostics. It distinguishes package
+requirements from runtime feature flags and local checks from device acceptance.
+
 ## Install
 
 ```json
@@ -83,6 +89,15 @@ The game-facing contract remains `0.1.0`. Captured callbacks and Promise
 replies cannot settle a later attempt; untagged global native SDK events remain
 a transport limitation. Re-run consumer conformance, ad regression tests and
 the affected builds, then verify timeout/retry flows on device and in portals.
+
+Unreleased AdMob recovery (ported from Gym2): the adapter retries failed banners
+with 2–64 second backoff, cancels retries on hide/remove, and checks ads-removal
+ownership before every attempt. Copy `scripts/patches/native-ad-consent-errors.patch`
+with the updated patch runner and adapter. On Android/iOS UMP errors, that patch
+attaches the SDK's current `canRequestAds` to the rejected call; only an explicit
+`true` allows initialization to continue. No JavaScript consent cache is used.
+The regression tests execute the adapter with SDK failures and a controlled
+clock; real-device recovery and consent checks remain consumer QA.
 
 Package `0.1.0-alpha.7` adds native AdMob/Yandex request identity from Gym.
 Copy `platform/ads/native-ad-events.js` and the updated native adapters together
