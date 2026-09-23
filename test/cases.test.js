@@ -19,6 +19,7 @@ const CANONICAL = [
     'controller-exposes-exactly-the-manifest',
     'every-contract-method-is-callable',
     'exiting-the-app-is-safe-off-native',
+    'generic-web-privacy-options-are-unavailable',
     'hide-native-status-bar-is-safe-off-native',
     'initialize-accepts-the-contract-bag-and-resolves',
     'initialize-honours-the-remove-ads-flag-it-was-given',

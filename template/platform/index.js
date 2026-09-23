@@ -34,6 +34,10 @@ export function createPlatformController() {
     preloadRewardedAd: bridge.preloadRewardedAd,
     setAdsRemovedOwned: bridge.setAdsRemovedOwned,
 
+    // Privacy
+    getPrivacyOptionsState: bridge.getPrivacyOptionsState,
+    showPrivacyOptions: bridge.showPrivacyOptions,
+
     // Purchases
     supportsNativePurchases: bridge.supportsNativePurchases,
     supportsRestorePurchases: bridge.supportsRestorePurchases,

@@ -20,7 +20,7 @@
 //
 // It does not become `1.0.0` before a second consumer has been through it —
 // step 6 may still find a breaking problem.
-export const CONTRACT_VERSION = '0.1.0';
+export const CONTRACT_VERSION = '0.2.0';
 
 // Every method `createPlatformController()` hands the game, and nothing else.
 // Sorted so a diff over this array is a diff over the contract rather than over
@@ -31,6 +31,7 @@ export const PLATFORM_CONTRACT = Object.freeze([
   'exitNativeApp',
   'finishPurchaseTransaction',
   'getPortalLanguage',
+  'getPrivacyOptionsState',
   'getPurchaseDebugSnapshot',
   'getPurchasePrices',
   'getPurchaseProducts',
@@ -47,6 +48,7 @@ export const PLATFORM_CONTRACT = Object.freeze([
   'restorePurchases',
   'setAdsRemovedOwned',
   'showInterstitialAd',
+  'showPrivacyOptions',
   'showRewardedAd',
   'supportsNativePurchases',
   'supportsRestorePurchases',
@@ -69,6 +71,13 @@ export const CAPABILITY_GROUPS = Object.freeze({
     'showRewardedAd',
     'preloadRewardedAd',
     'setAdsRemovedOwned',
+  ]),
+  // Unavailable platforms return { available: false, busy: false } and false.
+  // A successful form requires the caller to reload after preserving its state;
+  // until reload, the platform must block ads prepared under the old choices.
+  privacy: Object.freeze([
+    'getPrivacyOptionsState',
+    'showPrivacyOptions',
   ]),
   purchases: Object.freeze([
     'supportsNativePurchases',

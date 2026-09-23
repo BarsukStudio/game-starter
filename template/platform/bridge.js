@@ -538,3 +538,14 @@ export async function bindNativeLifecycle(handlers) {
 export async function exitNativeApp() {
   return nativeShell.exitNativeApp();
 }
+
+// This template has no privacy-options transport. Consumers with one expose
+// the real availability and form through the versioned facade, never via SDKs
+// imported by game code. Unavailable is the contract's supported no-op.
+export function getPrivacyOptionsState() {
+  return { available: false, busy: false };
+}
+
+export async function showPrivacyOptions() {
+  return false;
+}
