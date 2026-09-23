@@ -7,7 +7,7 @@
 Канонический путь для агентов:
 
 ```text
-/Users/macintosh/Applications/Multiplatform/game-starter/LEGACY_AUDIT_PROMPT.md
+/Users/macintosh/Applications/Projects/BarsukStudio/game-starter/LEGACY_AUDIT_PROMPT.md
 ```
 
 Документ намеренно лежит в корне рабочей копии `game-starter`, а не в

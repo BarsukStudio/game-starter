@@ -76,8 +76,8 @@ existing blocks; never overwrite an entire native file with a snippet.
   lockfile. Do not resurrect disabled adapters or copy stale `OTHER_LDFLAGS`.
   Mediation network choice, versions and dashboard mappings are not certified by
   the plugin verifier.
-- Copy `template/scripts/patch-native-ad-events.mjs` and its entire adjacent
-  `patches/` directory together. Merge its invocation into `postinstall` and
+- Copy `template/scripts/patch-native-ad-events.mjs`, `verify-admob.mjs`,
+  `admob-files.json` and the adjacent `patches/` directory together. Merge its invocation into `postinstall` and
   `prebuild`, retaining existing hooks. The runner needs Git and the game root:
 
   ```sh
@@ -89,6 +89,19 @@ existing blocks; never overwrite an entire native file with a snippet.
   manually or turn the failure into a warning. Existing games can carry additional
   approved patches; preserve them. Banner geometry patches are shell-specific;
   decide from the intended safe area/navigation behavior, not by copying Gym blindly.
+
+  The native release builder and Android sync run `--check` explicitly; direct
+  Vite invocation does not run npm's `prebuild` hook. Keep this preflight when
+  copying those scripts. AdMob uses the official pinned package: the runner applies only Yandex request
+  identities and verifies AdMob file hashes. The template hash manifest is stock;
+  an approved consumer banner geometry patch may change only BannerExecutor.java's
+  hash after comparison with the official integrity-verified npm archive. No custom
+  initialization, consent-error or request-ID patches, and no JS banner retries.
+  Stock consent errors disable ads for the current initialization.
+
+  A pending banner Promise must not block fullscreen setup. Start the store
+  independently of advertising initialization, with a bounded entitlement wait
+  before forced ads and ownership checks that also respect late Restore results.
 
 For Android, merge `android.classpaths` and `android.variables` from the manifest.
 The Kotlin plugin classpath is needed by the native ad stack. Keep root Gradle
@@ -138,6 +151,8 @@ handlers. Keep the real controller under test; do not replace it with a stub.
 2. Merge `diagnostics.androidVariables` into `android/variables.gradle`:
 
    ```gradle
+   firebaseCommonVersion = '<diagnostics.androidVariables.firebaseCommonVersion>'
+   firebaseAnalyticsVersion = '<diagnostics.androidVariables.firebaseAnalyticsVersion>'
    firebaseCrashlyticsVersion = '<diagnostics.androidVariables.firebaseCrashlyticsVersion>'
    firebasePerfVersion = '<diagnostics.androidVariables.firebasePerfVersion>'
    ```

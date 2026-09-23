@@ -86,6 +86,7 @@ function stripDeclaredCoordinates(contents, lines) {
   }, contents);
 }
 
+execFileSync('node', ['scripts/patch-native-ad-events.mjs', '--check'], { stdio: 'inherit' });
 execFileSync('npx', ['cap', 'sync', 'android'], { stdio: 'inherit' });
 
 const config = JSON.parse(fs.readFileSync(androidConfigPath, 'utf8'));

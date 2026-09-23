@@ -24,6 +24,8 @@ const env = {
 
 const run = (command, args) => execFileSync(command, args, { stdio: 'inherit', env });
 
+// Verify before generating any release assets, including the direct Vite path.
+run('node', ['scripts/patch-native-ad-events.mjs', '--check']);
 run('node', ['scripts/vite-run.mjs', 'build']);
 run('node', ['scripts/assert-production-ads.mjs']);
 

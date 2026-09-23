@@ -6,8 +6,8 @@ import { createNativeAdEvents } from './native-ad-events.js';
 // dynamically: every other target ships without it, and a static import would
 // pull it into all five bundles.
 //
-// The adapter owns no provider state and has no module-scope side effect — the
-// plugin handle, the injected dependencies and nothing else. The bridge owns the
+// The adapter retains the native presentation until a correlated terminal reply.
+// The bridge owns the
 // shared ad lifecycles and opens every operation on them (`beginShow`,
 // `beginLoad`); this file only drives the SDK and reports what it answered.
 import { debugLog } from '../../debug.js';
@@ -16,6 +16,22 @@ import { getNativeKey } from '../env.js';
 
 let deps = null;
 let plugin = null;
+let presentation = null;
+
+export function hasPresentation() {
+  return presentation !== null;
+}
+
+export function isPresentationUnresolved(format) {
+  return presentation?.format === format && !presentation.scope.isCurrent();
+}
+
+function settlePresentation(format, requestId) {
+  if (!presentation || presentation.format !== format || presentation.scope.requestId !== requestId) return;
+  const unresolved = !presentation.scope.isCurrent();
+  presentation = null;
+  if (unresolved) deps.onPresentationSettled?.();
+}
 
 function getConfig() {
   if (APP_CONFIG.ads.nativeTestMode) return APP_CONFIG.ads.yandex.test;
@@ -99,7 +115,25 @@ export async function init(injected) {
       ),
       YandexAds.addListener(
         'rewardedFailedToShow',
-        (error) => deps.rewarded.showFailed(error),
+        (error) => {
+          settlePresentation('rewarded', error?.requestId);
+          deps.rewarded.showFailed(error);
+        },
+      ),
+      YandexAds.addListener(
+        'rewardedDismissed',
+        (payload) => {
+          // Legacy callers need the result's reward bit before closing. Keep
+          // both formats reserved so another show cannot precede that close.
+          if (presentation?.format === 'rewarded'
+            && presentation.scope.requestId === payload?.requestId
+            && presentation.scope.isCurrent()
+            && !presentation.scope.rewardConfirmationBound) return;
+          // Bound rewards survive dismissal. Close the game before another
+          // format can start; only confirmation may arrive later for this view.
+          settlePresentation('rewarded', payload?.requestId);
+          deps.rewarded.showClosed(payload);
+        },
       ),
       YandexAds.addListener(
         'rewarded',
@@ -119,11 +153,17 @@ export async function init(injected) {
       ),
       YandexAds.addListener(
         'interstitialFailedToShow',
-        (error) => deps.interstitial.showFailed(error),
+        (error) => {
+          settlePresentation('interstitial', error?.requestId);
+          deps.interstitial.showFailed(error);
+        },
       ),
       YandexAds.addListener(
         'interstitialDismissed',
-        (payload) => deps.interstitial.showClosed(payload),
+        (payload) => {
+          settlePresentation('interstitial', payload?.requestId);
+          deps.interstitial.showClosed(payload);
+        },
       ),
       YandexAds.addListener('bannerLoaded', () => debugLog('YandexAds banner loaded')),
       YandexAds.addListener(
@@ -147,12 +187,21 @@ export async function init(injected) {
 }
 
 export async function showInterstitial() {
+  if (presentation) throw new Error('Yandex native presentation has not settled');
   const lifecycle = deps.interstitial.captureShow();
   if (typeof plugin?.YandexAds?.showInterstitial !== 'function') {
     lifecycle.showFailed(new Error('Yandex interstitial API is unavailable'));
     return false;
   }
-  const result = await plugin.YandexAds.showInterstitial({ requestId: lifecycle.requestId });
+  presentation = { format: 'interstitial', scope: lifecycle };
+  let result;
+  try {
+    result = await plugin.YandexAds.showInterstitial({ requestId: lifecycle.requestId });
+  } catch (error) {
+    settlePresentation('interstitial', lifecycle.requestId);
+    throw error;
+  }
+  settlePresentation('interstitial', lifecycle.requestId);
   if (result?.presented !== true) {
     lifecycle.showFailed(new Error('Yandex interstitial failed to present'));
     return false;
@@ -165,21 +214,30 @@ export async function showInterstitial() {
 }
 
 export async function showRewarded() {
+  if (presentation) throw new Error('Yandex native presentation has not settled');
   const lifecycle = deps.rewarded.captureShow();
   if (typeof plugin?.YandexAds?.showRewarded !== 'function') {
     lifecycle.showFailed(new Error('Yandex rewarded API is unavailable'));
     return false;
   }
-  const result = await plugin.YandexAds.showRewarded({ requestId: lifecycle.requestId });
+  presentation = { format: 'rewarded', scope: lifecycle };
+  let result;
+  try {
+    result = await plugin.YandexAds.showRewarded({ requestId: lifecycle.requestId });
+  } catch (error) {
+    settlePresentation('rewarded', lifecycle.requestId);
+    throw error;
+  }
+  settlePresentation('rewarded', lifecycle.requestId);
   if (result?.presented !== true) {
     lifecycle.showFailed(new Error('Yandex rewarded ad failed to present'));
     return false;
   }
   // The event remains authoritative when available; these calls only
   // complete a lifecycle if the native listener was silent. The plugin
-  // resolves this result on dismissal, so close only after applying its
-  // reward bit. A separate dismissed listener could close the FSM first
-  // and lose a reward when the rewarded event itself was dropped.
+  // resolves this result on dismissal. Bound callers may already be closed;
+  // their confirmation still belongs to this request. Legacy callers close
+  // here after the reward bit, while both formats remain reserved until result.
   lifecycle.showStarted();
   if (result.rewarded === true) lifecycle.rewardEarned(result);
   lifecycle.showClosed();

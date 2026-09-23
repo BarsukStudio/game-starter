@@ -1,4 +1,3 @@
-import { createNativeAdEvents } from './native-ad-events.js';
 // AdMob native ads, through the Capacitor community plugin.
 //
 // The default native ad stack: everything that is not routed to Yandex by a
@@ -7,7 +6,7 @@ import { createNativeAdEvents } from './native-ad-events.js';
 // adapters it pulls in are wired into the Gradle/Pods setup rather than loaded
 // on demand.
 //
-// The adapter owns banner recovery and native request options. The
+// The adapter uses stock plugin events and native request options. The
 // bridge owns the shared ad lifecycles and opens every operation on them
 // (`beginShow`, `beginLoad`); this file only drives the SDK and reports what it
 // answered.
@@ -28,7 +27,46 @@ import { getNativeKey } from '../env.js';
 let deps = null;
 let interstitialOptions = null;
 let rewardOptions = null;
-let stopBannerRecovery = () => {};
+// Stock events have no request identity. Keep a presentation bound to its
+// original scope until the SDK reports a terminal event, even after a watchdog.
+const shows = { interstitial: null, rewarded: null };
+
+async function bindPresentationEvents(format, events) {
+  await Promise.all([
+    AdMob.addListener(events.Showed, (payload) => shows[format]?.showStarted(payload)),
+    AdMob.addListener(events.FailedToShow, (error) => {
+      const scope = shows[format];
+      const wasUnresolved = scope && !scope.isCurrent();
+      shows[format] = null;
+      scope?.showFailed(error);
+      if (wasUnresolved) deps.onPresentationSettled?.();
+    }),
+    AdMob.addListener(events.Dismissed, (payload) => {
+      const scope = shows[format];
+      const wasUnresolved = scope && !scope.isCurrent();
+      shows[format] = null;
+      scope?.showClosed(payload);
+      if (wasUnresolved) deps.onPresentationSettled?.();
+    }),
+  ]);
+}
+
+// A watchdog ended the JS attempt but the native presentation is still unknown.
+export function isPresentationUnresolved(format) {
+  return Boolean(shows[format] && !shows[format].isCurrent());
+}
+
+function beginPresentation(format) {
+  if (shows[format]) throw new Error(`Previous AdMob ${format} presentation has not settled`);
+  return (shows[format] = deps[format].captureShow());
+}
+
+function failPresentation(format, scope, error) {
+  const wasUnresolved = shows[format] === scope && !scope.isCurrent();
+  if (shows[format] === scope) shows[format] = null;
+  scope.showFailed(error);
+  if (wasUnresolved) deps.onPresentationSettled?.();
+}
 
 function getConfig() {
   return {
@@ -56,12 +94,7 @@ export function isRewardedReady() {
 // warn and carry on, and a listener registration or preload that throws stays
 // thrown, exactly as it is today.
 export async function init(injected) {
-  stopBannerRecovery();
-  deps = {
-    ...injected,
-    interstitial: createNativeAdEvents(injected.interstitial, () => globalThis.crypto.randomUUID()),
-    rewarded: createNativeAdEvents(injected.rewarded, () => globalThis.crypto.randomUUID()),
-  };
+  deps = injected;
   const config = getConfig();
 
   try {
@@ -88,12 +121,8 @@ export async function init(injected) {
       return false;
     }
   } catch (error) {
-    // The native patch reads UMP at the point of failure, never a JS cache.
-    if (error?.data?.canRequestAds !== true) {
-      console.warn('AdMob consent flow failed; native ads stay disabled.', error);
-      return false;
-    }
-    console.warn('AdMob consent update failed; UMP still permits ad requests.', error);
+    console.warn('AdMob consent flow failed; native ads stay disabled.', error);
+    return false;
   }
 
   // ATT controls tracking/personalization on iOS, but it must not gate the
@@ -117,26 +146,7 @@ export async function init(injected) {
       isTesting: config.useSampleAds,
     };
 
-    AdMob.addListener(
-      InterstitialAdPluginEvents.Loaded,
-      (payload) => deps.interstitial.loadSucceeded(payload),
-    );
-    AdMob.addListener(
-      InterstitialAdPluginEvents.FailedToLoad,
-      (error) => deps.interstitial.loadFailed(error),
-    );
-    AdMob.addListener(
-      InterstitialAdPluginEvents.Showed,
-      (payload) => deps.interstitial.showStarted(payload),
-    );
-    AdMob.addListener(
-      InterstitialAdPluginEvents.FailedToShow,
-      (error) => deps.interstitial.showFailed(error),
-    );
-    AdMob.addListener(
-      InterstitialAdPluginEvents.Dismissed,
-      (payload) => deps.interstitial.showClosed(payload),
-    );
+    await bindPresentationEvents('interstitial', InterstitialAdPluginEvents);
 
     // The consent form and ATT prompt above are modal, so ownership can land
     // mid-init. Re-read the flag instead of trusting the one checked on entry.
@@ -148,47 +158,15 @@ export async function init(injected) {
         margin: 0,
         isTesting: config.useSampleAds,
       };
-      let active = true;
-      let retryTimer = null;
-      let failures = 0;
-      const isAdsRemoved = deps.isAdsRemoved;
-      const clearRetry = () => {
-        if (retryTimer !== null) clearTimeout(retryTimer);
-        retryTimer = null;
-      };
-      stopBannerRecovery = () => {
-        active = false;
-        clearRetry();
-      };
-      const retryBanner = (error) => {
-        if (!active || isAdsRemoved() || retryTimer !== null) return;
-        console.warn('AdMob banner load failed; scheduling retry', error);
-        const delay = 1000 * 2 ** Math.min(6, ++failures);
-        retryTimer = setTimeout(() => {
-          retryTimer = null;
-          void showBanner();
-        }, delay);
-      };
-      const showBanner = async () => {
-        if (!active || isAdsRemoved()) return;
-        try {
-          await AdMob.showBanner(bannerOptions);
-        } catch (error) {
-          retryBanner(error);
-        }
-      };
-      // The plugin destroys failed banners. SDK auto-refresh cannot recover
-      // that view; re-create it, but never after ownership or provider changes.
-      await Promise.all([
-        AdMob.addListener(BannerAdPluginEvents.Loaded, () => {
-          if (!active) return;
-          clearRetry();
-          failures = 0;
-          debugLog('Banner loaded');
-        }),
-        AdMob.addListener(BannerAdPluginEvents.FailedToLoad, retryBanner),
-      ]);
-      await showBanner();
+      // One application request. Refresh and failure behavior belong to the
+      // unmodified plugin/SDK; do not start an application retry timer.
+      // Stock Android can leave this promise pending when a banner already
+      // exists after a WebView reload. Fullscreen setup must not depend on it.
+      void Promise.resolve()
+        .then(() => {
+          if (!deps.isAdsRemoved()) return AdMob.showBanner(bannerOptions);
+        })
+        .catch((error) => console.warn('AdMob banner load failed', error));
       deps.preloadInterstitial();
     }
   }
@@ -198,30 +176,7 @@ export async function init(injected) {
     isTesting: config.useSampleAds,
   };
 
-  AdMob.addListener(
-    RewardAdPluginEvents.Loaded,
-    (payload) => deps.rewarded.loadSucceeded(payload),
-  );
-  AdMob.addListener(
-    RewardAdPluginEvents.FailedToLoad,
-    (error) => deps.rewarded.loadFailed(error),
-  );
-  AdMob.addListener(
-    RewardAdPluginEvents.Showed,
-    (payload) => deps.rewarded.showStarted(payload),
-  );
-  AdMob.addListener(
-    RewardAdPluginEvents.FailedToShow,
-    (error) => deps.rewarded.showFailed(error),
-  );
-  AdMob.addListener(
-    RewardAdPluginEvents.Dismissed,
-    (payload) => deps.rewarded.showClosed(payload),
-  );
-  AdMob.addListener(
-    RewardAdPluginEvents.Rewarded,
-    (payload) => deps.rewarded.rewardEarned(payload),
-  );
+  await bindPresentationEvents('rewarded', RewardAdPluginEvents);
 
   deps.preloadRewarded();
   return true;
@@ -230,47 +185,54 @@ export async function init(injected) {
 // Throws on purpose when the plugin does: the bridge's show entry point owns the
 // catch that turns it into a `showFailed`.
 export async function showInterstitial() {
-  const lifecycle = deps.interstitial.captureShow();
-  await AdMob.showInterstitial({ requestId: lifecycle.requestId });
+  const scope = beginPresentation('interstitial');
+  try {
+    await AdMob.showInterstitial();
+  } catch (error) {
+    failPresentation('interstitial', scope, error);
+    throw error;
+  }
   return true;
 }
 
 export async function showRewarded() {
-  const lifecycle = deps.rewarded.captureShow();
-  // The plugin resolves this call only from its own reward callback, so
-  // its resolution carries the same reward fact the Rewarded event does —
-  // on a channel that survives a dismissal arriving first. It never
-  // resolves when the player closes without a reward, so it must not be
-  // awaited; both handlers are attached here instead.
-  AdMob.showRewardVideoAd({ requestId: lifecycle.requestId }).then(
-    (payload) => lifecycle.rewardEarned(payload),
-    (error) => lifecycle.showFailed(error),
-  );
+  const scope = beginPresentation('rewarded');
+  // The stock Android/iOS promise resolves only when the SDK earns a reward.
+  // Use this per-call channel, not the uncorrelated global Rewarded event.
+  // A dismissal without a reward may leave this promise pending.
+  try {
+    AdMob.showRewardVideoAd().then(
+      (payload) => scope.rewardEarned(payload),
+      (error) => failPresentation('rewarded', scope, error),
+    );
+  } catch (error) {
+    failPresentation('rewarded', scope, error);
+    throw error;
+  }
   return true;
 }
 
 export function preloadInterstitial() {
-  const lifecycle = deps.interstitial.captureLoad();
+  const scope = deps.interstitial.captureLoad();
   void Promise.resolve()
-    .then(() => AdMob.prepareInterstitial({ ...interstitialOptions, requestId: lifecycle.requestId }))
-    .catch((error) => {
+    .then(() => AdMob.prepareInterstitial(interstitialOptions))
+    .then((payload) => scope.loadSucceeded(payload), (error) => {
       console.warn('Interstitial preload failed', error);
-      lifecycle.loadFailed(error);
+      scope.loadFailed(error);
     });
 }
 
 export function preloadRewarded() {
-  const lifecycle = deps.rewarded.captureLoad();
+  const scope = deps.rewarded.captureLoad();
   void Promise.resolve()
-    .then(() => AdMob.prepareRewardVideoAd({ ...rewardOptions, requestId: lifecycle.requestId }))
-    .catch((error) => {
+    .then(() => AdMob.prepareRewardVideoAd(rewardOptions))
+    .then((payload) => scope.loadSucceeded(payload), (error) => {
       console.warn('Rewarded preload failed', error);
-      lifecycle.loadFailed(error);
+      scope.loadFailed(error);
     });
 }
 
 export function hideBanner() {
-  stopBannerRecovery();
   void Promise.resolve(AdMob.hideBanner())
     .catch((error) => console.warn('AdMob banner hide failed', error));
 }
@@ -279,6 +241,5 @@ export function hideBanner() {
 // the one left behind has to go before the new provider draws its own. Nothing
 // to load here — unlike the Yandex plugin this one is always present.
 export function removeBanner() {
-  stopBannerRecovery();
   return AdMob.removeBanner();
 }

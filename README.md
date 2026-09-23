@@ -90,6 +90,29 @@ replies cannot settle a later attempt; untagged global native SDK events remain
 a transport limitation. Re-run consumer conformance, ad regression tests and
 the affected builds, then verify timeout/retry flows on device and in portals.
 
+Unreleased reward confirmation (2026-09-17, copied from Gym and migrated across
+seven consumers): pass `coordinator.captureReward()` to `showRewardedAd(callback)`.
+The callback belongs to the original snapshotted request and can confirm its reward
+after UI finalization. Call `coordinator.invalidate()` after a successful progress
+reset. The game owns economy and persistence; this is not process-death recovery.
+Keep the callback separate from presentation events, and keep `onFinalize` free
+of late bonus payouts. The runtime SHA and platform contract version are unchanged.
+
+Optional `onAdUnavailable` / `onAdAvailable` callbacks expose an unresolved AdMob or Yandex
+presentation and its later native terminal result. Both formats stay blocked while
+native state is unknown. The game owns the notice and music policy; no automatic
+reload or timer-based native reset is performed. Yandex reserves both formats
+until a matching request-ID terminal event or the original show result arrives;
+late replies cannot release a newer presentation. For bound confirmations, its
+dismissed listener releases the reservation before immediately closing the game
+lifecycle; a delayed reward result cannot resume gameplay under a later show.
+Legacy calls without a confirmation callback keep both formats reserved until
+the show result grants any confirmed reward and closes their lifecycle. AdMob's current stock-package
+policy and the retained Yandex identities are documented in [PLUGINS.md](PLUGINS.md).
+
+The following recovery/request-ID notes describe superseded implementations.
+Follow [PLUGINS.md](PLUGINS.md) for the current native patch policy.
+
 Unreleased AdMob recovery (ported from Gym2): the adapter retries failed banners
 with 2–64 second backoff, cancels retries on hide/remove, and checks ads-removal
 ownership before every attempt. Copy `scripts/patches/native-ad-consent-errors.patch`

@@ -10,6 +10,17 @@ let sequence = 0;
 async function fixture(consent = async () => ({ canRequestAds: true })) {
   const timers = new Map(); const listeners = new Map();
   const f = { timers, banners: 0, removed: false, preloads: 0, clock: 0 };
+  const visibilityListeners = new Set();
+  f.document = {
+    visibilityState: 'visible',
+    addEventListener: (event, callback) => { if (event === 'visibilitychange') visibilityListeners.add(callback); },
+    removeEventListener: (event, callback) => { if (event === 'visibilitychange') visibilityListeners.delete(callback); },
+  };
+  f.visibility = (state) => {
+    f.document.visibilityState = state;
+    for (const callback of visibilityListeners) callback();
+  };
+  f.visibilityListeners = visibilityListeners;
   f.sdk = {
     initialize: async () => {}, requestConsentInfo: consent,
     trackingAuthorizationStatus: async () => ({ status: 'authorized' }),
@@ -44,6 +55,7 @@ async function fixture(consent = async () => ({ canRequestAds: true })) {
   f.adapter = await import(moduleUrl(`
     const f = globalThis.__adRecoveryFixture;
     const setTimeout = (fn, ms) => { const id = ++f.clock; f.timers.set(id, { fn, ms }); return id; };
+    const document = f.document;
     const clearTimeout = (id) => f.timers.delete(id);
     const console = { warn() {} };
     ${rewritten}
@@ -57,65 +69,64 @@ async function fixture(consent = async () => ({ canRequestAds: true })) {
   return f;
 }
 
-test('banner failure retries once, backs off to 64s, and a load resets recovery', async () => {
-  const f = await fixture(); await f.init(); assert.equal(f.banners, 1);
-  for (const delay of [2000, 4000, 8000, 16000, 32000, 64000, 64000]) {
-    f.emit('failed', new Error('no fill')); f.emit('failed', new Error('duplicate'));
-    assert.equal(await f.tick(), delay);
+test('banner failures and visibility changes never trigger application retries', async () => {
+  const f = await fixture(); assert.equal(await f.init(), true);
+  for (let i = 0; i < 10; i++) {
+    f.emit('failed', { code: 3 }); f.visibility('hidden'); f.visibility('visible');
   }
-  assert.equal(f.banners, 8);
-  f.emit('failed'); f.emit('loaded'); assert.equal(f.timers.size, 0);
-  f.emit('failed'); assert.equal(await f.tick(), 2000);
+  assert.equal(f.banners, 1); assert.equal(f.timers.size, 0);
+  assert.equal(f.visibilityListeners.size, 0);
 });
 
-test('banner bridge rejection also retries without stopping fullscreen preloads', async () => {
+test('banner rejection does not block fullscreen setup or start a retry', async () => {
   const f = await fixture();
-  f.sdk.showBanner = async () => { f.banners++; throw new Error('bridge failed'); };
-  assert.equal(await f.init(), true); assert.equal(f.preloads, 2);
-  f.emit('failed'); assert.equal(await f.tick(), 2000);
-  assert.equal(f.banners, 2); assert.equal(f.timers.size, 1);
-  await f.adapter.removeBanner(); assert.equal(f.timers.size, 0);
+  f.sdk.showBanner = async () => { f.banners++; throw new Error('no fill'); };
+  assert.equal(await f.init(), true);
+  assert.equal(f.banners, 1); assert.equal(f.preloads, 2); assert.equal(f.timers.size, 0);
 });
 
-test('hide/remove cancel banner retries and ignore late failures', async () => {
+test('a pending banner promise never blocks fullscreen setup', async () => {
+  const f = await fixture();
+  f.sdk.showBanner = () => { f.banners++; return new Promise(() => {}); };
+  assert.equal(await f.init(), true);
+  assert.equal(f.banners, 1);
+  assert.equal(f.preloads, 2);
+  assert.equal(f.adapter.isRewardedReady(), true);
+  assert.equal(f.timers.size, 0);
+});
+
+test('ownership suppresses banners and interstitial preload while retaining rewarded', async () => {
+  const f = await fixture(); f.removed = true;
+  assert.equal(await f.init(), true); assert.equal(f.banners, 0); assert.equal(f.preloads, 1);
+});
+
+test('ownership acquired during consent is respected', async () => {
+  const f = await fixture(async () => { f.removed = true; return { canRequestAds: true }; });
+  await f.init(); assert.equal(f.banners, 0); assert.equal(f.preloads, 1);
+});
+
+test('hide and remove do not recreate a failed banner', async () => {
   for (const method of ['hideBanner', 'removeBanner']) {
-    const f = await fixture(); await f.init(); f.emit('failed');
-    await f.adapter[method](); f.emit('failed');
-    assert.equal(f.timers.size, 0); assert.equal(f.banners, 1);
+    const f = await fixture(); await f.init(); await f.adapter[method]();
+    f.emit('failed'); f.visibility('hidden'); f.visibility('visible');
+    assert.equal(f.banners, 1); assert.equal(f.timers.size, 0);
   }
 });
 
-test('ownership blocks a queued banner retry and initial banner creation', async () => {
-  const f = await fixture(); await f.init(); f.emit('failed'); f.removed = true;
-  await f.tick(); assert.equal(f.banners, 1); assert.equal(f.timers.size, 0);
-  const owner = await fixture(); owner.removed = true; await owner.init();
-  assert.equal(owner.banners, 0);
-});
-
-test('provider teardown during a pending banner call blocks its late rejection', async () => {
-  const f = await fixture(); let reject;
-  f.sdk.showBanner = () => new Promise((_, fail) => { reject = fail; });
-  const init = f.init();
-  for (let i = 0; !reject && i < 20; i++) await Promise.resolve();
-  assert.ok(reject); await f.adapter.removeBanner(); reject(new Error('late failure'));
-  await init; assert.equal(f.timers.size, 0);
-});
-
-test('consent errors permit ads only with an explicit native UMP true', async () => {
+test('stock consent errors disable ads without relying on patched error data', async () => {
   for (const value of [true, false, undefined, 'true']) {
     const f = await fixture(async () => { throw Object.assign(new Error('UMP unavailable'), { data: { canRequestAds: value } }); });
-    assert.equal(await f.init(), value === true);
-    assert.equal(f.banners, value === true ? 1 : 0);
-    assert.equal(f.preloads, value === true ? 2 : 0);
+    assert.equal(await f.init(), false); assert.equal(f.banners, 0); assert.equal(f.preloads, 0);
   }
 });
 
-test('consent success without permission stays disabled; form errors use current native permission', async () => {
-  const denied = await fixture(async () => ({ canRequestAds: false }));
-  assert.equal(await denied.init(), false); assert.equal(denied.banners, 0);
-  for (const value of [true, false]) {
-    const f = await fixture(async () => ({ status: 'REQUIRED', isConsentFormAvailable: true }));
-    f.sdk.showConsentForm = async () => { throw Object.assign(new Error('form unavailable'), { data: { canRequestAds: value } }); };
-    assert.equal(await f.init(), value); assert.equal(f.banners, value ? 1 : 0);
+test('consent success requires explicit permission and form failures disable ads', async () => {
+  for (const value of [true, false, undefined]) {
+    const f = await fixture(async () => ({ canRequestAds: value }));
+    assert.equal(await f.init(), value === true);
+    assert.equal(f.banners, value === true ? 1 : 0);
   }
+  const f = await fixture(async () => ({ status: 'REQUIRED', isConsentFormAvailable: true }));
+  f.sdk.showConsentForm = async () => { throw new Error('form unavailable'); };
+  assert.equal(await f.init(), false); assert.equal(f.banners, 0);
 });

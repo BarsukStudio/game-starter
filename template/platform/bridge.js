@@ -198,6 +198,18 @@ function getPresentationTimeoutMs() {
     : AD_PRESENTATION_TIMEOUT_MS;
 }
 
+function reportUnresolvedPresentation(format, onBlocked) {
+  const adapter = state.provider === 'admob-native' ? nativeAdmob
+    : state.provider === 'yandex-native' ? nativeYandex : null;
+  if (!adapter) return false;
+  const unresolved = ['interstitial', 'rewarded'].find(adapter.isPresentationUnresolved);
+  if (!unresolved) return false;
+  onBlocked?.();
+  console.warn('Ad presentation has no terminal native callback', { provider: state.provider, format, unresolved });
+  state.callbacks.onAdUnavailable?.({ format, reason: 'unresolved-presentation' });
+  return true;
+}
+
 state.interstitialLifecycle = withAdAttemptScopes(createAdLifecycle, {
   // Timers are a dependency, never an ambient global: the lifecycle is a headless
   // state machine that the contract tests drive on a fake clock, and the bridge is
@@ -210,8 +222,14 @@ state.interstitialLifecycle = withAdAttemptScopes(createAdLifecycle, {
     onLoaded: (payload) => state.callbacks.onInterstitialLoaded?.(payload),
     onLoadFailed: (error) => state.callbacks.onInterstitialLoadFailed?.(error),
     onShown: () => state.callbacks.onInterstitialShown?.(),
-    onShowFailed: (error) => state.callbacks.onInterstitialShowFailed?.(error),
-    onClosed: () => state.callbacks.onInterstitialClosed?.(),
+    onShowFailed: (error) => {
+      state.callbacks.onInterstitialShowFailed?.(error);
+      reportUnresolvedPresentation('interstitial');
+    },
+    onClosed: () => {
+      state.callbacks.onInterstitialClosed?.();
+      reportUnresolvedPresentation('interstitial');
+    },
   },
 });
 
@@ -220,17 +238,21 @@ state.rewardedLifecycle = withAdAttemptScopes(createAdLifecycle, {
   clearTimeoutFn: (timer) => window.clearTimeout(timer),
   name: 'Rewarded ad',
   presentationTimeoutMs: getPresentationTimeoutMs,
-  // Only AdMob mediation can deliver a reward after its dismissal. Yandex and
-  // the portal SDKs report the reward through the show call's own result or
-  // their own callbacks, so a close there has nothing left to wait for and must
-  // not be delayed.
-  lateRewardGraceMs: () => (state.provider === 'admob-native' ? AD_LATE_REWARD_GRACE_MS : 0),
+  // Legacy unbound callers retain their grace. Bound confirmations have an
+  // independent lifetime, so dismissal can release the UI immediately.
+  lateRewardGraceMs: () => (!state.rewardConfirmation && state.provider === 'admob-native' ? AD_LATE_REWARD_GRACE_MS : 0),
   callbacks: {
     onLoaded: (payload) => state.callbacks.onRewardedLoaded?.(payload),
     onLoadFailed: (error) => state.callbacks.onRewardedLoadFailed?.(error),
     onShown: () => state.callbacks.onRewardedShown?.(),
-    onShowFailed: (error) => state.callbacks.onRewardedShowFailed?.(error),
-    onClosed: () => state.callbacks.onRewardedClosed?.(),
+    onShowFailed: (error) => {
+      state.callbacks.onRewardedShowFailed?.(error);
+      reportUnresolvedPresentation('rewarded');
+    },
+    onClosed: () => {
+      state.callbacks.onRewardedClosed?.();
+      reportUnresolvedPresentation('rewarded');
+    },
     onRewarded: (payload) => state.callbacks.onRewardedComplete?.(payload),
   },
 });
@@ -242,7 +264,31 @@ state.rewardedLifecycle = withAdAttemptScopes(createAdLifecycle, {
 function createAdAdapterDeps() {
   return {
     interstitial: state.interstitialLifecycle,
-    rewarded: state.rewardedLifecycle,
+    rewarded: {
+      ...state.rewardedLifecycle,
+      captureShow() {
+        const scope = state.rewardedLifecycle.captureShow();
+        const confirm = state.rewardConfirmation;
+        if (!confirm) return scope;
+        let rewarded = false;
+        return {
+          ...scope,
+          rewardConfirmationBound: true,
+          rewardEarned(payload) {
+            if (rewarded) return false;
+            rewarded = true;
+            // Only this per-call confirmation survives closing the UI. All
+            // presentation/close signals retain the runtime's stale-event gate.
+            if (scope.isCurrent()) scope.showStarted();
+            confirm(payload);
+            return true;
+          },
+        };
+      },
+    },
+    onPresentationSettled: () => {
+      if (!reportUnresolvedPresentation('fullscreen')) state.callbacks.onAdAvailable?.();
+    },
     isAdsRemoved: () => state.removeAdsFlag,
     preloadInterstitial: preloadInterstitialAd,
     preloadRewarded: preloadRewardedAd,
@@ -391,6 +437,8 @@ export function getPurchaseProducts() {
 // the `showFailed` the lifecycle needs. CrazyGames is synchronous and throws
 // inside the try on its own.
 export async function showInterstitialAd() {
+  if (state.provider === 'yandex-native' && nativeYandex.hasPresentation()
+    && !['interstitial', 'rewarded'].some(nativeYandex.isPresentationUnresolved)) return false;
   const lifecycle = state.interstitialLifecycle;
   if (!lifecycle.beginShow()) return false;
   const attempt = lifecycle.captureShow();
@@ -399,6 +447,10 @@ export async function showInterstitialAd() {
   // owner check belongs here rather than only at the call sites.
   if (state.removeAdsFlag) {
     lifecycle.showFailed(new Error('Interstitial disabled by ads-removal ownership'));
+    return false;
+  }
+  if (reportUnresolvedPresentation('interstitial')) {
+    attempt.showFailed(new Error('Ad presentation state is unknown'));
     return false;
   }
 
@@ -428,9 +480,14 @@ export async function showInterstitialAd() {
 // so an SDK rejection would escape as an unhandled rejection instead of becoming
 // the `showFailed` the lifecycle needs. CrazyGames is synchronous and throws
 // inside the try on its own.
-export async function showRewardedAd() {
+export async function showRewardedAd(onRewardConfirmed) {
+  if (reportUnresolvedPresentation('rewarded', () => {
+    state.callbacks.onRewardedShowFailed?.(new Error('Ad presentation state is unknown'));
+  })) return false;
+  if (state.provider === 'yandex-native' && nativeYandex.hasPresentation()) return false;
   const lifecycle = state.rewardedLifecycle;
   if (!lifecycle.beginShow()) return false;
+  state.rewardConfirmation = typeof onRewardConfirmed === 'function' ? onRewardConfirmed : null;
   const attempt = lifecycle.captureShow();
 
   try {
