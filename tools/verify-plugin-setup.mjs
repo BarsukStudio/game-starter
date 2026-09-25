@@ -32,7 +32,7 @@ const escape = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const code = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*(?:\/\/|#).*$/gm, '');
 const normalizePath = (value) => value.replace(/\$\((\w+)\)/g, '${$1}');
 
-export function verifyPluginSetup({ root, targets, diagnostics = false, run = spawnSync }) {
+export function verifyPluginSetup({ root, targets, diagnostics = false, consent = false, run = spawnSync }) {
   const errors = [];
   let checks = 0;
   function check(ok, message) {
@@ -61,6 +61,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, run = sp
     catch { check(false, `Invalid plutil output for ${file}`); return {}; }
   }
 
+  consent ||= fs.existsSync(path.join(root, 'src/js/platform/consent-signals.js'));
   const pkg = json('package.json');
   const lock = json('package-lock.json');
   const installedLock = json('node_modules/.package-lock.json');
@@ -83,6 +84,20 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, run = sp
     }
   }
   const plugins = { ...nativePlugins, ...(diagnostics ? firebasePlugins : {}) };
+  const revenueFile = 'src/js/platform/ads/ad-revenue.js';
+  if (fs.existsSync(path.join(root, revenueFile))) {
+    check(read(revenueFile) === fs.readFileSync(new URL('../template/platform/ads/ad-revenue.js', import.meta.url), 'utf8'),
+      'Revenue: collector differs from the shared starter template; review the schema before updating consumers.');
+    check(Boolean(declared['@capacitor-firebase/analytics']), 'Revenue: Firebase Analytics dependency is required.');
+    if (targets.includes('android')) {
+      const yandex = code(read('node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt'));
+      for (const format of ['banner', 'interstitial', 'rewarded']) {
+        check(new RegExp(`(?:notifyListeners|notifyRequest)\\("${format}Impression",\\s*adEvent\\(${format}AdUnitId\\)\\.put\\("impressionData",\\s*impressionData\\?\\.rawData\\)\\)`).test(yandex),
+          `Revenue: Android Yandex ${format} must forward impressionData.rawData.`);
+      }
+    }
+  }
+
   if (diagnostics) {
     read('src/js/platform/diagnostics.js');
     const controller = code(read('src/js/platform/index.js'));
@@ -110,6 +125,24 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, run = sp
       const project = name.replace(/^@/, '').replace('/', '-');
       check(new RegExp(`implementation\\s+project\\(['"]:${escape(project)}['"]\\)`).test(generated), `Android: ${name} missing from generated dependencies; run cap:sync:android.`);
       check(Array.isArray(registry) && registry.some((plugin) => plugin.pkg === name), `Android: ${name} missing from the generated plugin registry.`);
+    }
+    if (consent) {
+      const namespace = appGradle.match(/\bnamespace\s*=?\s*['"]([^'"]+)['"]/)?.[1]
+        ?? appGradle.match(/\bapplicationId\s*=?\s*['"]([^'"]+)['"]/)?.[1];
+      check(Boolean(namespace), 'Android consent: application namespace is missing.');
+      if (namespace) {
+        const folder = `android/app/src/main/java/${namespace.replaceAll('.', '/')}`;
+        const activity = code(read(`${folder}/MainActivity.java`));
+        const plugin = code(read(`${folder}/ConsentSignalsPlugin.java`));
+        const onCreate = activity.match(/\bonCreate\s*\([^)]*\)\s*\{([^}]*?)\}/)?.[1] ?? '';
+        const registration = onCreate.search(/\bregisterPlugin\s*\(ConsentSignalsPlugin\.class\)\s*;/);
+        check(registration >= 0 && onCreate.search(/\bsuper\.onCreate\s*\(/) > registration,
+          'Android consent: register ConsentSignalsPlugin inside onCreate before super.onCreate.');
+        check(new RegExp(`\\bpackage\\s+${escape(namespace)}\\s*;`).test(plugin)
+          && /@CapacitorPlugin\(name\s*=\s*"ConsentSignals"\)/.test(plugin)
+          && /class ConsentSignalsPlugin extends Plugin/.test(plugin),
+          'Android consent: ConsentSignalsPlugin must declare the application package and Capacitor name.');
+      }
     }
     if (diagnostics) {
       for (const plugin of ['com.google.gms.google-services', 'com.google.firebase.crashlytics', 'com.google.firebase.firebase-perf']) {
@@ -155,6 +188,38 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, run = sp
       return { ...parent?.buildSettings, ...config?.buildSettings };
     });
     const phases = (app?.buildPhases ?? []).map((id) => objects[id]);
+    if (consent) {
+      const included = (kind, name) => phases.some((phase) => phase?.isa === kind && phase.files?.some((id) => {
+        const ref = objects[objects[id]?.fileRef];
+        return ref?.path === name || ref?.name === name;
+      }));
+      const source = code(read('ios/App/App/ConsentSignalsPlugin.swift'));
+      check(included('PBXSourcesBuildPhase', 'ConsentSignalsPlugin.swift'),
+        'iOS consent: ConsentSignalsPlugin.swift must be in App Sources.');
+      check(/class ConsentSignalsPlugin\s*:\s*CAPPlugin,\s*CAPBridgedPlugin/.test(source)
+        && /jsName\s*=\s*"ConsentSignals"/.test(source), 'iOS consent: missing ConsentSignals Capacitor bridge declaration.');
+      for (const method of ['read', 'showConsentForm', 'showPrivacyOptionsForm']) {
+        check(source.includes(`CAPPluginMethod(name: "${method}"`) && new RegExp(`\\bfunc ${method}\\(`).test(source),
+          `iOS consent: missing registered method ${method}.`);
+      }
+      const info = plist('ios/App/App/Info.plist');
+      check(info.UIMainStoryboardFile === 'Main', 'iOS consent: expected Main launch storyboard in Info.plist.');
+      const storyboard = read('ios/App/App/Base.lproj/Main.storyboard').replace(/<!--[\s\S]*?-->/g, '');
+      const initial = storyboard.match(/initialViewController="([^"]+)"/)?.[1];
+      const controller = [...storyboard.matchAll(/<viewController\b[^>]*>/g)].map(([tag]) => tag)
+        .find((tag) => initial && tag.includes(`id="${initial}"`));
+      const controllerClass = controller?.match(/customClass="([^"]+)"/)?.[1];
+      check(Boolean(controllerClass) && /customModule="App"/.test(controller ?? '')
+        && new RegExp(`class ${escape(controllerClass ?? '')}\\s*:\\s*CAPBridgeViewController\\s*\\{\\s*override func capacitorDidLoad\\(\\)\\s*\\{\\s*bridge\\?\\.registerPluginInstance\\(ConsentSignalsPlugin\\(\\)\\)`).test(source),
+        'iOS consent: initial storyboard controller must register ConsentSignalsPlugin in capacitorDidLoad.');
+      check(included('PBXResourcesBuildPhase', 'Main.storyboard'), 'iOS consent: Main.storyboard must be in App Resources.');
+      const privacy = plist('ios/App/App/PrivacyInfo.xcprivacy');
+      check(privacy.NSPrivacyAccessedAPITypes?.some((entry) => entry.NSPrivacyAccessedAPIType === 'NSPrivacyAccessedAPICategoryUserDefaults'
+        && entry.NSPrivacyAccessedAPITypeReasons?.includes('CA92.1')) === true,
+        'iOS consent: merge the UserDefaults CA92.1 reason into PrivacyInfo.xcprivacy.');
+      check(included('PBXResourcesBuildPhase', 'PrivacyInfo.xcprivacy'), 'iOS consent: PrivacyInfo.xcprivacy must be in App Resources.');
+    }
+
     if (diagnostics) {
       const delegate = code(read('ios/App/App/AppDelegate.swift'));
       check(/\bimport FirebaseCore\b/.test(delegate) && /\bFirebaseApp\.configure\(\)/.test(delegate), 'iOS: AppDelegate must initialize FirebaseCore.');
@@ -194,12 +259,12 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, run = sp
 }
 
 function main() {
-  const { values } = parseArgs({ options: { targets: { type: 'string' }, diagnostics: { type: 'boolean' }, help: { type: 'boolean' } } });
+  const { values } = parseArgs({ options: { targets: { type: 'string' }, diagnostics: { type: 'boolean' }, consent: { type: 'boolean' }, help: { type: 'boolean' } } });
   if (values.help) {
-    console.log('Usage: barsuk-verify-plugins --targets android,ios [--diagnostics]\nRun from the game root after install and sync. Supports web, Android Groovy and iOS CocoaPods App on macOS. Read-only; no build/device/console proof.');
+    console.log('Usage: barsuk-verify-plugins --targets android,ios [--diagnostics] [--consent]\nRun from the game root after install and sync. Supports web, Android Groovy and iOS CocoaPods App on macOS. Read-only; no build/device/console proof.');
     return;
   }
-  const result = verifyPluginSetup({ root: process.cwd(), targets: values.targets?.split(','), diagnostics: values.diagnostics });
+  const result = verifyPluginSetup({ root: process.cwd(), targets: values.targets?.split(','), diagnostics: values.diagnostics, consent: values.consent });
   for (const error of result.errors) console.error(`FAIL: ${error}`);
   console.log(`${result.errors.length ? 'FAILED' : 'PASSED'}: ${result.checks} source/dependency checks, ${result.errors.length} errors. No native build, device or Firebase delivery was verified.`);
   process.exitCode = result.errors.length ? 1 : 0;

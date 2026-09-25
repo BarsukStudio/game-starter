@@ -272,6 +272,13 @@ Choose `--targets web`, `android`, `ios` or a comma-separated combination. Targe
 are explicit: a missing native folder must fail, not silently turn into a web-only
 check. Omit `--diagnostics` and the diagnostic test for a consumer without Firebase.
 If either diagnostic plugin is declared, the verifier also checks the full bundle.
+Consent checks activate when `src/js/platform/consent-signals.js` exists, or with
+`--consent`. For native targets they require Android registration before
+`super.onCreate`, the iOS bridge methods and initial storyboard controller,
+App Sources membership, and a bundled privacy manifest with UserDefaults reason
+CA92.1. This checks the documented Java / CocoaPods App template layout; a custom
+controller must be registered in the consent Swift source for this preflight.
+It does not compile those files or prove runtime consent behavior.
 For a pre-release checkout, run `node /path/to/game-starter/tools/verify-plugin-setup.mjs`
 with the same flags **from the game root**, without repinning the game.
 
@@ -343,10 +350,35 @@ Before using these adapters in a native consumer:
   successfully before `showPrivacyOptions()`, refusing while purchase delivery
   owns a pending save. On success reload to discard ads loaded under old choices.
   On failure keep ads stopped and allow the form to be retried. The bridge refuses
-  a duplicate form or one overlapping a fullscreen ad.
+  a duplicate form or one overlapping a fullscreen ad. Cleanup has a five-second
+  deadline: timeout/rejection releases the busy state for another user attempt,
+  keeps ads stopped, and does not open UMP. Only a successful cleanup can open the
+  form. A late cleanup completion cannot open a form or clear a newer attempt.
+  The native form itself is not timed out, to avoid overlapping native forms.
+  UMP update errors continue to block both native providers until restart.
 
 This migration was exercised in Gym2 and Miner with source tests, browser checks,
 and local native builds; real consent/ATT, ads and purchase behavior still require
 device QA. Existing pinned consumers need an explicit migration. A template edit
 never rewrites connected games automatically. Package publication/pin updates for
 new template changes are a separate step.
+
+
+## Optional Android ad revenue collector
+
+`template/platform/ads/ad-revenue.js` is the shared consumer-neutral collector
+originally exercised in Gym and adopted unchanged in Gym2. `template/scripts/ad-revenue-test.mjs` ships its normalization suite for
+consumer `scripts/`. It is opt-in: copy it
+and wire both native adapters explicitly; the base template does not import
+Firebase Analytics on behalf of games that do not use collection. It emits no
+custom revenue on iOS or web. This is adapter transport, not headless runtime.
+The [Console integration guide](../barsuk-studio-console/docs/analytics-workflow.md#connect-android-ad-revenue-collection-in-another-game)
+owns event schema, listener mappings, native forwarding requirements and export
+acceptance. Keep game IDs, releases and account state in consumer status files.
+
+When `src/js/platform/ads/ad-revenue.js` exists, the shared plugin verifier checks
+its exact bytes against this template and Android Yandex forwarding for all three
+formats. On a template update, review schema compatibility and migrate consumers
+explicitly; do not silently update a consumer from another checkout. The verifier
+proves source parity only, never Firebase receipt or revenue coverage. Existing
+published starter pins do not acquire these local additions automatically.

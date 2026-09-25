@@ -230,3 +230,87 @@ test('the distributable carries the guide, reference versions and executable ver
   const files = JSON.parse(result.stdout)[0].files.map((file) => file.path);
   for (const file of ['PLUGINS.md', 'tools/verify-plugin-setup.mjs', 'template/plugins-manifest.json', 'template/platform/diagnostics.js']) assert.ok(files.includes(file), file);
 });
+
+function consentFixture(t) {
+  const app = fixture(t);
+  app.write('src/js/platform/consent-signals.js', '// opt in to native consent checks');
+  app.write('android/app/src/main/java/test/example/ConsentSignalsPlugin.java',
+    fs.readFileSync(new URL('../template/native/android/ConsentSignalsPlugin.java', import.meta.url), 'utf8').replace('YOUR_APPLICATION_PACKAGE', 'test.example'));
+  app.write('android/app/src/main/java/test/example/MainActivity.java',
+    'class MainActivity { public void onCreate(Bundle state) { registerPlugin(ConsentSignalsPlugin.class); super.onCreate(state); } }');
+  app.write('ios/App/App/ConsentSignalsPlugin.swift', fs.readFileSync(new URL('../template/native/ios/ConsentSignalsPlugin.swift', import.meta.url), 'utf8'));
+  app.write('ios/App/App/Info.plist', { UIMainStoryboardFile: 'Main' });
+  app.write('ios/App/App/Base.lproj/Main.storyboard', '<document initialViewController="main"><viewController id="main" customClass="GameBridgeViewController" customModule="App"/></document>');
+  app.write('ios/App/App/PrivacyInfo.xcprivacy', { NSPrivacyAccessedAPITypes: [
+    { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryUserDefaults', NSPrivacyAccessedAPITypeReasons: ['CA92.1'] },
+  ] });
+  app.project.objects.app.buildPhases.unshift('sources');
+  app.project.objects.sources = { isa: 'PBXSourcesBuildPhase', files: ['consentBuild'] };
+  for (const [id, name] of [['consent', 'ConsentSignalsPlugin.swift'], ['storyboard', 'Main.storyboard'], ['privacy', 'PrivacyInfo.xcprivacy']]) {
+    app.project.objects[`${id}Build`] = { fileRef: `${id}Ref` };
+    app.project.objects[`${id}Ref`] = { path: name };
+    if (id !== 'consent') app.project.objects.resources.files.push(`${id}Build`);
+  }
+  app.write('ios/App/App.xcodeproj/project.pbxproj', app.project);
+  return app;
+}
+
+test('native consent preflight accepts template wiring and preserves optional web consumers', (t) => {
+  assert.deepEqual(consentFixture(t).verify().errors, []);
+  assert.deepEqual(fixture(t).verify({ targets: ['web'], consent: true }).errors, []);
+});
+
+for (const activity of [
+  'void onCreate(Bundle state) { /* registerPlugin(ConsentSignalsPlugin.class); */ super.onCreate(state); }',
+  'void onCreate(Bundle state) { super.onCreate(state); registerPlugin(ConsentSignalsPlugin.class); }',
+  'void other() { registerPlugin(ConsentSignalsPlugin.class); super.onCreate(state); }',
+]) test(`native consent rejects invalid Android registration: ${activity}`, (t) => {
+  const app = consentFixture(t);
+  app.write('android/app/src/main/java/test/example/MainActivity.java', activity);
+  assert.ok(app.verify().errors.some(error => error.includes('before super.onCreate')));
+});
+
+for (const [phase, id, message] of [
+  ['sources', 'consentBuild', 'App Sources'],
+  ['resources', 'privacyBuild', 'PrivacyInfo.xcprivacy must be in'],
+  ['resources', 'storyboardBuild', 'Main.storyboard must be in'],
+]) test(`native consent requires target membership: ${id}`, (t) => {
+  const app = consentFixture(t);
+  app.project.objects[phase].files = app.project.objects[phase].files.filter(value => value !== id);
+  app.write('ios/App/App.xcodeproj/project.pbxproj', app.project);
+  assert.ok(app.verify().errors.some(error => error.includes(message)));
+});
+
+test('native consent rejects missing privacy reason and wrong initial controller', (t) => {
+  const app = consentFixture(t);
+  app.write('ios/App/App/PrivacyInfo.xcprivacy', { NSPrivacyAccessedAPITypes: [] });
+  app.write('ios/App/App/Base.lproj/Main.storyboard', '<document initialViewController="other"><viewController id="main" customClass="GameBridgeViewController" customModule="App"/></document>');
+  const errors = app.verify().errors;
+  assert.ok(errors.some(error => error.includes('CA92.1')));
+  assert.ok(errors.some(error => error.includes('initial storyboard controller')));
+});
+
+test('explicit consent flag detects absent integration even without JS opt-in', (t) => {
+  const app = fixture(t);
+  const errors = app.verify({ consent: true }).errors;
+  assert.ok(errors.some(error => error.includes('MainActivity.java')));
+  assert.ok(errors.some(error => error.includes('ConsentSignalsPlugin.swift')));
+});
+
+
+test('revenue preflight rejects collector drift and missing native ILRD transport', (t) => {
+  const app = fixture(t);
+  const collector = fs.readFileSync(new URL('../template/platform/ads/ad-revenue.js', import.meta.url), 'utf8');
+  const nativeFile = 'node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt';
+  app.write('src/js/platform/ads/ad-revenue.js', collector);
+  app.write(nativeFile, ['banner', 'interstitial', 'rewarded'].map(format =>
+    `notifyRequest("${format}Impression", adEvent(${format}AdUnitId).put("impressionData", impressionData?.rawData))`).join('\n'));
+  assert.deepEqual(app.verify().errors, []);
+  app.write('src/js/platform/ads/ad-revenue.js', collector.replace('schema_revision: 1', 'schema_revision: 2'));
+  app.write(nativeFile, '// notifyRequest("bannerImpression", adEvent(bannerAdUnitId).put("impressionData", impressionData?.rawData))');
+  const errors = app.verify().errors;
+  assert.ok(errors.some(error => error.includes('differs from the shared')));
+  for (const format of ['banner', 'interstitial', 'rewarded']) {
+    assert.ok(errors.some(error => error.includes(`Yandex ${format} must forward`)));
+  }
+});

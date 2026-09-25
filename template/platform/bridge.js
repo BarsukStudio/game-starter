@@ -330,10 +330,22 @@ export async function showPrivacyOptions() {
   // first and reloads after success, so both SDKs prepare fresh ads at startup.
   state.privacyAdsStopped = true;
   try {
-    await Promise.all([
-      nativeAdmob.removeBanner(),
-      nativeYandex.removeBannerIfAvailable(),
-    ]);
+    let cleanupTimer;
+    try {
+      // Native cleanup can lose its bridge reply. Release UI busy state on timeout,
+      // but never open UMP or resume old ads without confirmed cleanup.
+      await Promise.race([
+        Promise.all([
+          nativeAdmob.removeBanner(),
+          nativeYandex.removeBannerIfAvailable(),
+        ]),
+        new Promise((_, reject) => {
+          cleanupTimer = setTimeout(() => reject(new Error('Privacy ad cleanup timed out')), 5000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(cleanupTimer);
+    }
     await nativeAdmob.showNativePrivacyOptions();
     return true;
   } catch (error) {

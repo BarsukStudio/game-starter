@@ -116,24 +116,27 @@ for (const platform of ['ios', 'android']) test(`${platform} privacy form works 
 const bridgeSource = readFileSync(new URL('../template/platform/bridge.js', import.meta.url), 'utf8');
 const privacySource = bridgeSource.slice(bridgeSource.indexOf('let adsInitializing'), bridgeSource.indexOf('async function initializeAds'))
   .replaceAll('export ', '');
-function privacyFixture({ active = false, error = false, available = true } = {}) {
+function privacyFixture({ cleanup = async () => {}, active = false, error = false, available = true } = {}) {
   const calls = [];
   let complete;
-  const context = { state: {}, isNative: true, console: { warn() {} },
+  const timers = new Map();
+  let timerId = 0;
+  const context = { state: {}, isNative: true,
+    setTimeout: (callback) => { timers.set(++timerId, callback); return timerId; }, clearTimeout: id => timers.delete(id), console: { warn() {} },
     nativeAdmob: { getNativeConsentInfo: () => ({privacyOptionsRequired: available}), hasPresentation: () => active,
-      removeBanner: async () => calls.push('remove-admob'),
+      removeBanner: async () => { calls.push('remove-admob'); await cleanup(); },
       showNativePrivacyOptions: () => { calls.push('form'); return error ? Promise.reject(Error('form')) : new Promise(r => {complete=r;}); } },
     nativeYandex: { hasPresentation: () => false, removeBannerIfAvailable: async () => calls.push('remove-yandex') },
   };
   vm.createContext(context);
   vm.runInContext(privacySource + '\nglobalThis.open = showPrivacyOptions; globalThis.stopped = () => Boolean(state.privacyAdsStopped);', context);
-  return { context, calls, finish: () => complete() };
+  return { context, calls, expire: () => { for (const callback of [...timers.values()]) callback(); }, finish: () => complete() };
 }
 test('privacy form blocks ads before banner removal; duplicate request is refused', async () => {
   const f=privacyFixture(); const first=f.context.open();
   assert.equal(f.context.stopped(),true);
   assert.equal(await f.context.open(),false);
-  await Promise.resolve(); await Promise.resolve();
+  await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(f.calls,['remove-admob','remove-yandex','form']);
   f.finish(); assert.equal(await first,true);
   assert.equal(f.context.stopped(),true, 'old ads remain blocked until caller reloads');
@@ -162,3 +165,39 @@ for (const [name, callback] of [['showInterstitialAd', 'onInterstitialShowFailed
     assert.equal(failures.length, 1);
   });
 }
+
+
+test('privacy cleanup timeout releases busy state and ignores late completion during a retry', async () => {
+  let release;
+  let calls = 0;
+  const delayed = new Promise(resolve => { release = resolve; });
+  const f = privacyFixture({ cleanup: () => ++calls === 1 ? delayed : Promise.resolve() });
+  const first = f.context.open();
+  f.expire();
+  assert.equal(await first, false);
+  assert.equal(f.context.getPrivacyOptionsState().busy, false);
+  assert.equal(f.context.stopped(), true);
+  assert.equal(f.calls.includes('form'), false);
+  const retry = f.context.open();
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.calls.filter(call => call === 'form').length, 1);
+  assert.equal(f.context.getPrivacyOptionsState().busy, true);
+  assert.equal(await f.context.open(), false);
+  f.finish();
+  assert.equal(await retry, true);
+  assert.equal(f.context.stopped(), true);
+});
+
+test('rejected banner cleanup permits a new privacy attempt without resuming ads', async () => {
+  let calls = 0;
+  const f = privacyFixture({ cleanup: async () => { if (++calls === 1) throw Error('cleanup rejected'); } });
+  assert.equal(await f.context.open(), false);
+  assert.equal(f.context.getPrivacyOptionsState().busy, false);
+  assert.equal(f.context.stopped(), true);
+  const retry = f.context.open();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.calls.filter(call => call === 'form').length, 1);
+  f.finish(); assert.equal(await retry, true);
+});
