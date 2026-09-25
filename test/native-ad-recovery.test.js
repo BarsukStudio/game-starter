@@ -48,6 +48,10 @@ async function fixture(consent = async () => ({ canRequestAds: true })) {
     export const APP_CONFIG = { ads: { admob: { android: {} } } };
     export const getNativeKey = () => 'android'; export const debugLog = () => {};
     export const createNativeAdEvents = (events) => events;
+    export const readConsentSignals = async () => ({ gdprApplies: false });
+    export const showIosConsentForm = async () => { throw Error('unexpected iOS transport'); };
+    export const showIosPrivacyOptionsForm = async () => { throw Error('unexpected iOS transport'); };
+    export const hasYandexConsent = () => true;
     // Each fixture gets its own SDK binding even when imports are cached.
     // ${++sequence}
   `);

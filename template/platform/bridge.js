@@ -302,17 +302,53 @@ export async function hideNativeStatusBar() {
   return nativeShell.hideNativeStatusBar();
 }
 
+let adsInitializing = false;
+let privacyOpen = false;
+
 export async function initializePlatformServices(callbacks) {
+  adsInitializing = true;
+  try {
+    return await initializeAds(callbacks);
+  } finally {
+    adsInitializing = false;
+  }
+}
+
+export function getPrivacyOptionsState() {
+  return {
+    available: isNative && nativeAdmob.getNativeConsentInfo().privacyOptionsRequired,
+    busy: adsInitializing || privacyOpen,
+  };
+}
+
+export async function showPrivacyOptions() {
+  const options = getPrivacyOptionsState();
+  if (!options.available || options.busy
+    || nativeAdmob.hasPresentation() || nativeYandex.hasPresentation()) return false;
+  privacyOpen = true;
+  // Old preloaded ads must never be shown after choices change. The game saves
+  // first and reloads after success, so both SDKs prepare fresh ads at startup.
+  state.privacyAdsStopped = true;
+  try {
+    await Promise.all([
+      nativeAdmob.removeBanner(),
+      nativeYandex.removeBannerIfAvailable(),
+    ]);
+    await nativeAdmob.showNativePrivacyOptions();
+    return true;
+  } catch (error) {
+    console.warn('Privacy options failed; ads stay stopped until restart.', error);
+    return false;
+  } finally {
+    privacyOpen = false;
+  }
+}
+
+async function initializeAds(callbacks) {
   state.callbacks = callbacks;
   state.removeAdsFlag = Boolean(callbacks.removeAdsFlag);
 
   if (isNative) {
-    try {
-      await nativeShell.hideSplashScreen();
-    } catch (error) {
-      console.warn('SplashScreen.hide failed', error);
-    }
-
     const selection = resolveNativeAdProvider(callbacks.locale);
     state.providerSource = selection.source;
     if (selection.provider === 'off') {
@@ -437,6 +473,10 @@ export function getPurchaseProducts() {
 // the `showFailed` the lifecycle needs. CrazyGames is synchronous and throws
 // inside the try on its own.
 export async function showInterstitialAd() {
+  if (state.privacyAdsStopped) {
+    state.callbacks.onInterstitialShowFailed?.(new Error('Advertising stopped after privacy options'));
+    return false;
+  }
   if (state.provider === 'yandex-native' && nativeYandex.hasPresentation()
     && !['interstitial', 'rewarded'].some(nativeYandex.isPresentationUnresolved)) return false;
   const lifecycle = state.interstitialLifecycle;
@@ -481,6 +521,10 @@ export async function showInterstitialAd() {
 // the `showFailed` the lifecycle needs. CrazyGames is synchronous and throws
 // inside the try on its own.
 export async function showRewardedAd(onRewardConfirmed) {
+  if (state.privacyAdsStopped) {
+    state.callbacks.onRewardedShowFailed?.(new Error('Advertising stopped after privacy options'));
+    return false;
+  }
   if (reportUnresolvedPresentation('rewarded', () => {
     state.callbacks.onRewardedShowFailed?.(new Error('Ad presentation state is unknown'));
   })) return false;
@@ -513,6 +557,7 @@ export async function showRewardedAd(onRewardConfirmed) {
 
 export function preloadInterstitialAd() {
   if (state.removeAdsFlag) return;
+  if (state.privacyAdsStopped) return;
   const lifecycle = state.interstitialLifecycle;
   if (state.provider === 'admob-native' && nativeAdmob.isInterstitialReady()) {
     if (!lifecycle.beginLoad()) return;
@@ -530,6 +575,7 @@ export function preloadInterstitialAd() {
 }
 
 export function preloadRewardedAd() {
+  if (state.privacyAdsStopped) return;
   const lifecycle = state.rewardedLifecycle;
   if (state.provider === 'admob-native' && nativeAdmob.isRewardedReady()) {
     if (!lifecycle.beginLoad()) return;
@@ -594,15 +640,4 @@ export async function bindNativeLifecycle(handlers) {
 
 export async function exitNativeApp() {
   return nativeShell.exitNativeApp();
-}
-
-// This template has no privacy-options transport. Consumers with one expose
-// the real availability and form through the versioned facade, never via SDKs
-// imported by game code. Unavailable is the contract's supported no-op.
-export function getPrivacyOptionsState() {
-  return { available: false, busy: false };
-}
-
-export async function showPrivacyOptions() {
-  return false;
 }

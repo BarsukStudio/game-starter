@@ -13,6 +13,7 @@ import { createNativeAdEvents } from './native-ad-events.js';
 import { debugLog } from '../../debug.js';
 import { APP_CONFIG } from '../config.js';
 import { getNativeKey } from '../env.js';
+import { prepareNativeConsent, requestIosTrackingAuthorization } from './native-admob.js';
 
 let deps = null;
 let plugin = null;
@@ -82,23 +83,21 @@ export async function init(injected) {
     rewarded: createNativeAdEvents(injected.rewarded, () => globalThis.crypto.randomUUID()),
   };
 
+  const consent = await prepareNativeConsent();
+  if (!consent.canRequestAds) return false;
+  // UMP precedes ATT and SDK initialization for either native provider.
+  await requestIosTrackingAuthorization();
+
   let YandexAds;
   try {
     YandexAds = (await ensurePlugin())?.YandexAds;
     if (!YandexAds) throw new Error('YandexAds Capacitor plugin is unavailable');
     await YandexAds.initialize({
-      userConsent: true,
+      userConsent: consent.yandexConsent,
       locationTracking: false,
       enableLogging: APP_CONFIG.ads.nativeTestMode,
     });
-    // Yandex native is routed by `ru*` locale, so almost all of this audience
-    // sits outside the GDPR region, where consent is not required and a hard
-    // `false` only costs personalization. Consent is therefore claimed
-    // unconditionally, matching the previous release of the game. This is
-    // knowingly wrong for a `ru*` player inside the EEA/UK: the fix is a real
-    // consent signal (UMP region check, then `IABTCF_AddtlConsent` for Yandex
-    // AC vendor 1033), not a different constant here.
-    await YandexAds.setUserConsent({ value: true });
+    await YandexAds.setUserConsent({ value: consent.yandexConsent });
 
     await Promise.all([
       YandexAds.addListener(

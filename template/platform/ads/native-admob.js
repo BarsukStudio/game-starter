@@ -23,6 +23,7 @@ import {
 import { debugLog } from '../../debug.js';
 import { APP_CONFIG } from '../config.js';
 import { getNativeKey } from '../env.js';
+import { readConsentSignals, hasYandexConsent, showIosConsentForm, showIosPrivacyOptionsForm } from '../consent-signals.js';
 
 let deps = null;
 let interstitialOptions = null;
@@ -88,15 +89,60 @@ export function isRewardedReady() {
   return Boolean(rewardOptions);
 }
 
-// Returns whether the SDK came up. Only the two paths that disabled ads before
-// the split answer no — a failed `initialize`, and consent that does not allow
-// requests. Deliberately *not* wrapped in one try/catch: ATT and the banner
-// warn and carry on, and a listener registration or preload that throws stays
-// thrown, exactly as it is today.
+// Both native providers share one UMP update per WebView launch. A fallback
+// from Yandex to AdMob must not ask twice or bypass a failed consent flow.
+let consentPromise = null;
+let consentInfo = { canRequestAds: false, privacyOptionsRequired: false, yandexConsent: false };
+
+export function getNativeConsentInfo() {
+  return { ...consentInfo };
+}
+
+export function prepareNativeConsent() {
+  if (!consentPromise) consentPromise = collectNativeConsent();
+  return consentPromise;
+}
+
+async function collectNativeConsent() {
+  try {
+    let info = await AdMob.requestConsentInfo();
+    if (info.status === AdmobConsentStatus.REQUIRED && info.isConsentFormAvailable) {
+      info = await (getNativeKey() === 'ios' ? showIosConsentForm() : AdMob.showConsentForm());
+    }
+    consentInfo = {
+      canRequestAds: info.canRequestAds === true,
+      privacyOptionsRequired: info.privacyOptionsRequirementStatus === 'REQUIRED',
+      yandexConsent: false,
+    };
+    if (consentInfo.canRequestAds) {
+      try {
+        consentInfo.yandexConsent = hasYandexConsent(await readConsentSignals());
+      } catch (error) {
+        // Missing native choices never become permission for personalization.
+        console.warn('Native consent choices unavailable; Yandex consent stays false.', error);
+      }
+    }
+  } catch (error) {
+    console.warn('Ad consent flow failed; native ads stay disabled.', error);
+  }
+  return getNativeConsentInfo();
+}
+
+export function showNativePrivacyOptions() {
+  return getNativeKey() === 'ios' ? showIosPrivacyOptionsForm() : AdMob.showPrivacyOptionsForm();
+}
+
+export function hasPresentation() {
+  return Object.values(shows).some(Boolean);
+}
+
 export async function init(injected) {
   deps = injected;
   const config = getConfig();
-
+  const consent = await prepareNativeConsent();
+  if (!consent.canRequestAds) return false;
+  // Neither ATT refusal nor an ATT bridge error grants data-processing consent.
+  await requestIosTrackingAuthorization();
   try {
     await AdMob.initialize({
       initializeForTesting: config.testMode,
@@ -106,34 +152,6 @@ export async function init(injected) {
   } catch (error) {
     console.warn('AdMob initialize failed', error);
     return false;
-  }
-
-  try {
-    let consentInfo = await AdMob.requestConsentInfo();
-    if (
-      consentInfo.status === AdmobConsentStatus.REQUIRED
-      && consentInfo.isConsentFormAvailable
-    ) {
-      consentInfo = await AdMob.showConsentForm();
-    }
-    if (consentInfo.canRequestAds !== true) {
-      console.warn('AdMob consent does not allow ad requests; native ads stay disabled.');
-      return false;
-    }
-  } catch (error) {
-    console.warn('AdMob consent flow failed; native ads stay disabled.', error);
-    return false;
-  }
-
-  // ATT controls tracking/personalization on iOS, but it must not gate the
-  // independent UMP consent form above.
-  try {
-    const trackingInfo = await AdMob.trackingAuthorizationStatus();
-    if (trackingInfo.status === 'notDetermined') {
-      await AdMob.requestTrackingAuthorization();
-    }
-  } catch (error) {
-    console.warn('AdMob tracking authorization flow skipped', error);
   }
 
   if (!deps.isAdsRemoved()) {
@@ -242,4 +260,18 @@ export function hideBanner() {
 // to load here — unlike the Yandex plugin this one is always present.
 export function removeBanner() {
   return AdMob.removeBanner();
+}
+
+// Reuse the installed plugin's system ATT bridge for either native ad provider.
+// This does not initialize AdMob or grant Yandex data-processing consent.
+export async function requestIosTrackingAuthorization() {
+  if (getNativeKey() !== 'ios') return;
+  try {
+    const trackingInfo = await AdMob.trackingAuthorizationStatus();
+    if (trackingInfo.status === 'notDetermined') {
+      await AdMob.requestTrackingAuthorization();
+    }
+  } catch (error) {
+    console.warn('AdMob tracking authorization flow skipped', error);
+  }
 }

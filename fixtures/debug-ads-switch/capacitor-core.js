@@ -10,3 +10,5 @@ export const SystemBars = {
 };
 
 export const SystemBarType = Object.freeze({ StatusBar: 'statusBar', NavigationBar: 'navigationBar' });
+
+export const registerPlugin = () => ({ read: async () => ({ gdprApplies: false }) });

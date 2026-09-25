@@ -300,3 +300,53 @@ with `--verify` to execute them; without it Passport only records metadata.
   reports, readable stacks and `js_bootstrap` in the correct Firebase app.
 - Record versions, platforms, evidence and remaining gates in the game's status
   document. Keep account IDs, store state and device results out of this shared guide.
+
+
+## Local startup and native consent
+
+The copied `template/platform/startup.js` owns the local-load / next-frame /
+splash-release sequence. It takes `loadGame`, `revealScreen`, and `onLoadError`
+callbacks. The entry module initializes diagnostics, then calls it with a dynamic
+import of the game's main module and a native-only `hideSplashScreen()` callback.
+The game supplies its localized error/retry UI and reports the original error to
+diagnostics; retry reloads, never clears saves. Game input must be installed only
+after its handlers are ready. Start local initialization at module evaluation,
+not `window.onload`. Bundle fonts locally with their license; remove external font
+stylesheets. Font selection, error strings and DOM remain game-owned.
+
+Purchases and advertising initialize independently of splash release. Retain the
+consumer's Remove Ads entitlement gate before ads. A pending store, consent form,
+or ad SDK must not keep the local screen hidden. The bootstrap trace now measures
+local readiness; compare it with older purchase-gated traces only with that
+boundary change in mind.
+
+Native ad adapters share one UMP update per launch, before ATT and either SDK.
+UMP errors disable native ads for that launch. Yandex receives the native UMP
+region/additional-consent signals, never a permission inferred from language or
+ATT. The installed AdMob plugin remains stock except for the banner geometry
+patch. SDK versions, ad IDs and store product IDs do not change for this migration.
+
+Before using these adapters in a native consumer:
+
+- Copy `template/native/android/ConsentSignalsPlugin.java` into the application
+  package, replace `YOUR_APPLICATION_PACKAGE`, and register the plugin in
+  `MainActivity.onCreate` before `super.onCreate`.
+- Add `template/native/ios/ConsentSignalsPlugin.swift` to the application target's
+  Sources. Set the main storyboard controller to `GameBridgeViewController` in
+  the application module (or register the plugin in an existing custom controller).
+  Merge the supplied UserDefaults reason into the app's privacy manifest and
+  include that manifest in Resources. Do not replace an existing manifest.
+- UMP is already supplied by the pinned AdMob dependency. The iOS consent bridge
+  uses Capacitor's controller so consent can appear before ad SDK initialization.
+- Provide a localized settings entry when `getPrivacyOptionsState().available`
+  is true; refresh it after initialization and when settings open. Save progress
+  successfully before `showPrivacyOptions()`, refusing while purchase delivery
+  owns a pending save. On success reload to discard ads loaded under old choices.
+  On failure keep ads stopped and allow the form to be retried. The bridge refuses
+  a duplicate form or one overlapping a fullscreen ad.
+
+This migration was exercised in Gym2 and Miner with source tests, browser checks,
+and local native builds; real consent/ATT, ads and purchase behavior still require
+device QA. Existing pinned consumers need an explicit migration. A template edit
+never rewrites connected games automatically. Package publication/pin updates for
+new template changes are a separate step.

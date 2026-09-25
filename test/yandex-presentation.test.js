@@ -19,6 +19,8 @@ for (const format of ['interstitial', 'rewarded']) for (const boundDismissal of 
     }
     globalThis.__yandexPresentationTest = sdk;
     const stub = url(`
+      export const prepareNativeConsent = async () => ({canRequestAds: true, yandexConsent: false});
+      export const requestIosTrackingAuthorization = async () => {};
       export const YandexAds = globalThis.__yandexPresentationTest;
       export const APP_CONFIG = { ads: {} };
       export const debugLog = () => {};

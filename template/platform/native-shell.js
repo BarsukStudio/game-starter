@@ -12,10 +12,7 @@ import { SplashScreen } from '@capacitor/splash-screen';
 
 import { isNative } from './env.js';
 
-// Deliberately unguarded and deliberately not swallowing: the only caller is
-// already inside the native branch of `initializePlatformServices`, and it owns
-// the warning so the failure stays visible next to the startup sequence it
-// belongs to.
+// The local bootstrap calls this independently of purchases and advertising.
 export function hideSplashScreen() {
   return SplashScreen.hide();
 }
