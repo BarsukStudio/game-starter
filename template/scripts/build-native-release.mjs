@@ -24,6 +24,10 @@ const env = {
 
 const run = (command, args) => execFileSync(command, args, { stdio: 'inherit', env });
 
+// Consumer-owned mandatory gates run before any release asset mutation.
+run('npm', ['run', 'verify:js']);
+run('npm', ['run', 'verify:native', '--', platform]);
+
 // Verify before generating any release assets, including the direct Vite path.
 run('node', ['scripts/patch-native-ad-events.mjs', '--check']);
 run('node', ['scripts/vite-run.mjs', 'build']);

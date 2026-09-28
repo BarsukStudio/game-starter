@@ -9,14 +9,12 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Two games run against it now: Muscle Clicker, which it was cut from, and Muscle
-Clicker 2, which took the template as it stands and passes the same conformance
-run. That settles the first question a shared layer has to settle — whether the
-shape transfers, or only ever fitted the game it came from. It settles nothing
-about the second. `CONTRACT_VERSION` stays `0.1.0` because `1.0.0` is a promise
-not to move these names, and that promise has not been made: a transfer that
-worked twice is evidence, not a commitment. The package version moves with every
-batch that ships; the contract version does not follow it.
+Current contract: **0.3.0**; package: **0.1.0-alpha.9** (local candidate).
+Contract 0.3 adds optional ad-availability callbacks, request-bound late reward
+confirmation, and independent native lifecycle source identities. Consumer fixtures
+must expose `controls.lifecycle.appState(bool)`, `pause()` and `resume()` in
+`native-store`. Run the canonical suite against the real controller before repinning.
+Consumer rollout and device evidence live in each game's status document.
 
 ## The layer this owns
 
@@ -76,63 +74,32 @@ requirements from runtime feature flags and local checks from device acceptance.
 Pinned by exact SHA, as a devDependency. Nothing in a shipped bundle may import
 this package — consumers assert that in their own contract tests.
 
-The legacy migration baseline remains `10aa559`. Adding
-`LEGACY_AUDIT_PROMPT.md` is documentation-only: `CONTRACT_VERSION` and the
-template did not move, so consumers must not be repinned for this commit. Read
-the prompt from the working checkout, not from a pinned consumer's
-`node_modules`.
+## Updating a consumer
 
-Package `0.1.0-alpha.6` updates the ad adapters from Gym's scoped-request fix.
-Copying these template changes requires runtime `0.2.0` at
-`468a29ebfe8607631e262ede5491f807096957ab` (the `ad-attempt-scope` export).
-The game-facing contract remains `0.1.0`. Captured callbacks and Promise
-replies cannot settle a later attempt; untagged global native SDK events remain
-a transport limitation. Re-run consumer conformance, ad regression tests and
-the affected builds, then verify timeout/retry flows on device and in portals.
+Preserve the previous installed starter package before installing a candidate.
+Run `barsuk-compare-template --root /path/to/game --baseline /path/to/previous-starter`.
+The report distinguishes unchanged files, consumer-only changes, template updates,
+and files changed on both sides. It never overwrites game policy or native settings.
+Review `review-both` files and missing optional modules explicitly; copying the
+whole platform tree is not an update strategy. Native patch changes travel with
+their adapters and regression tests.
 
-Unreleased reward confirmation (2026-09-17, copied from Gym and migrated across
-seven consumers): pass `coordinator.captureReward()` to `showRewardedAd(callback)`.
-The callback belongs to the original snapshotted request and can confirm its reward
-after UI finalization. Call `coordinator.invalidate()` after a successful progress
-reset. The game owns economy and persistence; this is not process-death recovery.
-Keep the callback separate from presentation events, and keep `onFinalize` free
-of late bonus payouts. The runtime SHA and platform contract version are unchanged.
+Runtime 0.2.1 fixes confirmation deadlines and dispatch-attempt identity in
+`purchase-finish`. The local Gym candidate consumes npm archives under `vendor/`
+with lockfile integrity. Published consumers keep their existing exact SHA until
+an explicit release and migration; do not fabricate a future SHA or a device pass.
 
-Optional `onAdUnavailable` / `onAdAvailable` callbacks expose an unresolved AdMob or Yandex
-presentation and its later native terminal result. Both formats stay blocked while
-native state is unknown. The game owns the notice and music policy; no automatic
-reload or timer-based native reset is performed. Yandex reserves both formats
-until a matching request-ID terminal event or the original show result arrives;
-late replies cannot release a newer presentation. For bound confirmations, its
-dismissed listener releases the reservation before immediately closing the game
-lifecycle; a delayed reward result cannot resume gameplay under a later show.
-Legacy calls without a confirmation callback keep both formats reserved until
-the show result grants any confirmed reward and closes their lifecycle. AdMob's current stock-package
-policy and the retained Yandex identities are documented in [PLUGINS.md](PLUGINS.md).
+The native release script requires consumer `verify:js` and `verify:native --
+<ios|android>` scripts. They must fail before build/sync if a mandatory check fails.
+Local development builds remain independent of this release gate.
 
-The following recovery/request-ID notes describe superseded implementations.
-Follow [PLUGINS.md](PLUGINS.md) for the current native patch policy.
-
-Unreleased AdMob recovery (ported from Gym2): the adapter retries failed banners
-with 2–64 second backoff, cancels retries on hide/remove, and checks ads-removal
-ownership before every attempt. Copy `scripts/patches/native-ad-consent-errors.patch`
-with the updated patch runner and adapter. On Android/iOS UMP errors, that patch
-attaches the SDK's current `canRequestAds` to the rejected call; only an explicit
-`true` allows initialization to continue. No JavaScript consent cache is used.
-The regression tests execute the adapter with SDK failures and a controlled
-clock; real-device recovery and consent checks remain consumer QA.
-
-Package `0.1.0-alpha.7` adds native AdMob/Yandex request identity from Gym.
-Copy `platform/ads/native-ad-events.js` and the updated native adapters together
-with `scripts/patch-native-ad-events.mjs` and
-`scripts/patches/native-ad-request-ids.patch`. Add the patch runner to both
-`postinstall` and `prebuild`; it requires the Git CLI and must run from the game
-root. `node scripts/patch-native-ad-events.mjs --check` verifies the installed
-native sources without changing them. The patch targets AdMob 8.1.0 and Yandex
-plugin commit `86d30e7000a57dd8c406900f8325d0a82f0c5700`; SDK changes must
-revalidate applicability and native builds. Untagged/mismatched events are now
-ignored, so updated JS must ship with the patched native plugins. Runtime
-remains 0.2.0 and the platform contract remains 0.1.0.
+Reward placements are consumer-owned values. The template coordinator accepts an
+opaque placement and snapshotted payload. Pass its `captureReward()` callback to
+`showRewardedAd(callback)`; late confirmation may pay that original request after
+UI finalization. Call `invalidate()` after a successful progress reset.
+`onAdUnavailable({format, reason: 'unresolved-presentation'})` and `onAdAvailable()`
+report native presentation availability; they never authorize a second concurrent
+native show. SDK-specific request identities and patch policy live in [PLUGINS.md](PLUGINS.md).
 
 ## Rules
 

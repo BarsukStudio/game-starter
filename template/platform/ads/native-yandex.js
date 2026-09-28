@@ -303,3 +303,10 @@ export async function removeBannerIfAvailable() {
   if (typeof YandexAds?.removeBanner !== 'function') return;
   await YandexAds.removeBanner();
 }
+
+// Native loads and cached ads survive a WebView reload. Missing reset support
+// is an error: privacy choices must not change over an old native session.
+export async function resetAdsForPrivacy() {
+  const handle = await ensurePlugin();
+  await handle.YandexAds.resetAds();
+}

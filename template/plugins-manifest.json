@@ -4,7 +4,7 @@
   "evidence": "Reference package set used by local Android and unsigned iOS Debug builds. Device, Firebase console and store acceptance remain separate.",
   "platform": {
     "dependencies": {
-      "@barsuk/game-runtime": "https://github.com/BarsukStudio/game-runtime/archive/468a29ebfe8607631e262ede5491f807096957ab.tar.gz",
+      "@barsuk/game-runtime": "file:vendor/barsuk-game-runtime-0.2.1.tgz",
       "@capacitor/core": "8.5.2",
       "@capacitor/app": "8.1.1",
       "@capacitor/splash-screen": "8.0.2",
@@ -12,21 +12,35 @@
       "capacitor-plugin-yandex-ads": "https://github.com/BarsukStudio/capacitor-plugin-yandex-ads/archive/86d30e7000a57dd8c406900f8325d0a82f0c5700.tar.gz",
       "capacitor-plugin-cdv-purchase": "13.18.0"
     },
-    "devDependencies": { "vite": "8.3.0" }
+    "devDependencies": {
+      "vite": "8.3.0"
+    }
   },
   "android": {
-    "dependencies": { "@capacitor/android": "8.5.2" },
-    "devDependencies": { "@capacitor/cli": "8.5.2" },
+    "dependencies": {
+      "@capacitor/android": "8.5.2"
+    },
+    "devDependencies": {
+      "@capacitor/cli": "8.5.2"
+    },
     "classpaths": {
       "com.android.tools.build:gradle": "8.13.0",
       "com.google.gms:google-services": "4.5.0",
       "org.jetbrains.kotlin:kotlin-gradle-plugin": "2.2.20"
     },
-    "variables": { "minSdkVersion": 24, "compileSdkVersion": 36, "targetSdkVersion": 36 }
+    "variables": {
+      "minSdkVersion": 24,
+      "compileSdkVersion": 36,
+      "targetSdkVersion": 36
+    }
   },
   "ios": {
-    "dependencies": { "@capacitor/ios": "8.5.2" },
-    "devDependencies": { "@capacitor/cli": "8.5.2" },
+    "dependencies": {
+      "@capacitor/ios": "8.5.2"
+    },
+    "devDependencies": {
+      "@capacitor/cli": "8.5.2"
+    },
     "deploymentTarget": "15.0"
   },
   "diagnostics": {
@@ -48,5 +62,11 @@
       "firebasePerfVersion": "22.0.6"
     },
     "iosSdkVersion": "12.19.0"
+  },
+  "localArchives": {
+    "@barsuk/game-runtime": {
+      "version": "0.2.1",
+      "integrity": "sha512-NiO724TzY/WRgW23HeVPtojn2RfAVVDyhd2jTo5drXFwI+NHnFVkP6wFqMtKGQ34b1egayzwphdaq0muWB8zYA=="
+    }
   }
 }

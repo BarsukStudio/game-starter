@@ -20,7 +20,7 @@
 //
 // It does not become `1.0.0` before a second consumer has been through it —
 // step 6 may still find a breaking problem.
-export const CONTRACT_VERSION = '0.2.0';
+export const CONTRACT_VERSION = '0.3.0';
 
 // Every method `createPlatformController()` hands the game, and nothing else.
 // Sorted so a diff over this array is a diff over the contract rather than over
@@ -68,6 +68,8 @@ export const CAPABILITY_GROUPS = Object.freeze({
   ads: Object.freeze([
     'showInterstitialAd',
     'preloadInterstitialAd',
+    // Optional onRewardConfirmed callback is request-bound and may run after
+    // UI finalization. It fires at most once and replaces onRewardedComplete.
     'showRewardedAd',
     'preloadRewardedAd',
     'setAdsRemovedOwned',
@@ -93,6 +95,8 @@ export const CAPABILITY_GROUPS = Object.freeze({
     'restorePurchases',
     'getPurchaseDebugSnapshot',
   ]),
+  // onPause/onResume carry 'app-state' or 'native-pause'. Each source must
+  // release only itself; DOM visibility remains the consumer's independent input.
   lifecycle: Object.freeze([
     'bindNativeLifecycle',
     'exitNativeApp',
@@ -121,6 +125,9 @@ export const CAPABILITY_GROUPS = Object.freeze({
 // the starter quietly prescribe one.
 export const PLATFORM_CALLBACKS = Object.freeze({
   initializePlatformServices: Object.freeze([
+    // Optional: { format, reason: 'unresolved-presentation' } and no payload.
+    'onAdUnavailable',
+    'onAdAvailable',
     'onInterstitialLoaded',
     'onInterstitialLoadFailed',
     'onInterstitialShown',

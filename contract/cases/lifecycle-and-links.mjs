@@ -58,3 +58,27 @@ export const cases = [
     },
   },
 ];
+
+cases.push({
+  name: 'native-lifecycle-preserves-source-identity-and-disposes',
+  environment: 'native-store',
+  async run({ createController, controls }) {
+    assert.ok(controls.lifecycle, 'native fixture must expose lifecycle controls');
+    const events = [];
+    const dispose = await createController().bindNativeLifecycle({
+      onPause: source => events.push(['pause', source]),
+      onResume: source => events.push(['resume', source]),
+    });
+    controls.lifecycle.appState(false);
+    controls.lifecycle.pause();
+    controls.lifecycle.resume();
+    controls.lifecycle.appState(true);
+    assert.deepEqual(events, [
+      ['pause', 'app-state'], ['pause', 'native-pause'],
+      ['resume', 'native-pause'], ['resume', 'app-state'],
+    ]);
+    await dispose();
+    controls.lifecycle.pause();
+    assert.equal(events.length, 4);
+  },
+});

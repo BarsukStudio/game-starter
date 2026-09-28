@@ -93,7 +93,12 @@ export function showRewarded() {
       lifecycle.showStarted();
     },
     adFinished: () => {
-      if (!lifecycle.isCurrent()) return;
+      // Confirmation belongs to this request even after the UI watchdog.
+      // Late presentation signals must never resume a newer ad.
+      if (!lifecycle.isCurrent()) {
+        if (lifecycle.rewardConfirmationBound) lifecycle.rewardEarned();
+        return;
+      }
       crazySdk.game?.gameplayStart?.();
       lifecycle.showStarted();
       lifecycle.rewardEarned();

@@ -1,6 +1,6 @@
 {
   "name": "@barsuk/game-starter",
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-alpha.9",
   "description": "The versioned platform contract and starter template shared by Barsuk Studio games",
   "type": "module",
   "private": true,
@@ -32,6 +32,7 @@
   },
   "sideEffects": false,
   "bin": {
-    "barsuk-verify-plugins": "./tools/verify-plugin-setup.mjs"
+    "barsuk-verify-plugins": "./tools/verify-plugin-setup.mjs",
+    "barsuk-compare-template": "./tools/compare-template.mjs"
   }
 }

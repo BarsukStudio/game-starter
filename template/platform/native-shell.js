@@ -54,11 +54,11 @@ export async function bindNativeLifecycle({ onPause, onResume, onBack } = {}) {
 
   try {
     handles.push(await App.addListener('appStateChange', ({ isActive }) => {
-      if (isActive) onResume?.();
-      else onPause?.();
+      if (isActive) onResume?.('app-state');
+      else onPause?.('app-state');
     }));
-    handles.push(await App.addListener('pause', () => onPause?.()));
-    handles.push(await App.addListener('resume', () => onResume?.()));
+    handles.push(await App.addListener('pause', () => onPause?.('native-pause')));
+    handles.push(await App.addListener('resume', () => onResume?.('native-pause')));
     // Registering this listener disables Capacitor's default back behaviour,
     // so leaving the app is now the game's own decision — see `exitNativeApp`.
     handles.push(await App.addListener('backButton', (event) => onBack?.(event)));

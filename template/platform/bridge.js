@@ -305,13 +305,15 @@ export async function hideNativeStatusBar() {
 let adsInitializing = false;
 let privacyOpen = false;
 
+let platformInitialization = null;
 export async function initializePlatformServices(callbacks) {
-  adsInitializing = true;
-  try {
-    return await initializeAds(callbacks);
-  } finally {
-    adsInitializing = false;
+  // One controller lifetime per WebView. A repeat must not replace callbacks
+  // or lower an entitlement while SDK listeners from the first boot still live.
+  if (!platformInitialization) {
+    adsInitializing = true;
+    platformInitialization = initializeAds(callbacks).finally(() => { adsInitializing = false; });
   }
+  return platformInitialization;
 }
 
 export function getPrivacyOptionsState() {
@@ -337,7 +339,7 @@ export async function showPrivacyOptions() {
       await Promise.race([
         Promise.all([
           nativeAdmob.removeBanner(),
-          nativeYandex.removeBannerIfAvailable(),
+          nativeYandex.resetAdsForPrivacy(),
         ]),
         new Promise((_, reject) => {
           cleanupTimer = setTimeout(() => reject(new Error('Privacy ad cleanup timed out')), 5000);
@@ -358,7 +360,7 @@ export async function showPrivacyOptions() {
 
 async function initializeAds(callbacks) {
   state.callbacks = callbacks;
-  state.removeAdsFlag = Boolean(callbacks.removeAdsFlag);
+  state.removeAdsFlag ||= Boolean(callbacks.removeAdsFlag);
 
   if (isNative) {
     const selection = resolveNativeAdProvider(callbacks.locale);

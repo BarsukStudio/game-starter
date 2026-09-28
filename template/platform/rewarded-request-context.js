@@ -1,7 +1,7 @@
 // One rewarded show = one request, decided before the ad opens.
 //
 // The reward used to be reconstructed after the ad closed, from whatever
-// `openWindow`, `rewardNum`, `numPurch` and the visible modals happened to say
+// the selected placement and the visible controls happened to say
 // at that moment. A rewarded ad covers the app for tens of seconds and the
 // player can background it, so those globals are not the same ones the player
 // tapped on. Everything the grant needs is therefore snapshotted at tap time
@@ -9,12 +9,6 @@
 //
 // Deliberately free of game, DOM and SDK knowledge: `main.js` supplies the
 // payload and the two handlers, `bridge.js` supplies the terminal events.
-
-export const REWARDED_PLACEMENTS = {
-  RANDOM_REWARD: 'random_reward',
-  COMPETITION_DOUBLE: 'competition_double',
-  SHOP_OFFER: 'shop_offer',
-};
 
 const noop = () => { };
 

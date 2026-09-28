@@ -61,7 +61,8 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     catch { check(false, `Invalid plutil output for ${file}`); return {}; }
   }
 
-  consent ||= fs.existsSync(path.join(root, 'src/js/platform/consent-signals.js'));
+  const consentAdapters = ['native-admob.js', 'native-yandex.js'].map(file => path.join(root, 'src/js/platform/ads', file));
+  consent ||= consentAdapters.some(file => fs.existsSync(file) && /from\s*['"]\.\.\/consent-signals\.js['"]/.test(code(fs.readFileSync(file, 'utf8'))));
   const pkg = json('package.json');
   const lock = json('package-lock.json');
   const installedLock = json('node_modules/.package-lock.json');
@@ -78,7 +79,12 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       const actual = json(`${key}/package.json`);
       check(pkg[section]?.[name] === version, `${name}: ${section} must pin ${version}; found ${pkg[section]?.[name] ?? 'missing'}.`);
       check(lock.packages?.['']?.[section]?.[name] === version, `${name}: root lockfile pin differs from the baseline.`);
-      check(version.startsWith('https:') ? entry?.resolved === version : entry?.version === version, `${name}: resolved lockfile entry differs from the baseline.`);
+      check(/^(https:|file:)/.test(version) ? entry?.resolved === version : entry?.version === version, `${name}: resolved lockfile entry differs from the baseline.`);
+      if (version.startsWith('file:')) {
+        const archive = manifest.localArchives?.[name];
+        check(Boolean(archive) && entry?.integrity === archive.integrity && actual.version === archive.version,
+          `${name}: local candidate archive must match the reviewed integrity and version.`);
+      }
       check(Boolean(entry?.integrity) && installed?.integrity === entry.integrity && installed?.resolved === entry.resolved
         && installed?.version === entry.version && actual.version === entry.version, `${name}: installed metadata differs from package-lock.json; reinstall the declared dependencies.`);
     }
@@ -89,6 +95,19 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     check(read(revenueFile) === fs.readFileSync(new URL('../template/platform/ads/ad-revenue.js', import.meta.url), 'utf8'),
       'Revenue: collector differs from the shared starter template; review the schema before updating consumers.');
     check(Boolean(declared['@capacitor-firebase/analytics']), 'Revenue: Firebase Analytics dependency is required.');
+    for (const provider of ['admob', 'yandex']) {
+      const adapter = code(read(`src/js/platform/ads/native-${provider}.js`));
+      check(/import\s*\{\s*bindAdRevenueEvents\s*\}\s*from\s*['"]\.\/ad-revenue\.js['"]/.test(adapter)
+        && new RegExp(`await\\s+bindAdRevenueEvents\\(\\s*\\w+,\\s*['"]${provider}['"],`).test(adapter),
+      `Revenue: ${provider} adapter must await collector binding.`);
+      const mappings = provider === 'admob'
+        ? { banner: 'BannerAdPluginEvents.AdPaid', interstitial: 'InterstitialAdPluginEvents.AdImpression', rewarded: 'RewardAdPluginEvents.AdImpression' }
+        : { banner: "'bannerImpression'", interstitial: "'interstitialImpression'", rewarded: "'rewardedImpression'" };
+      for (const [format, event] of Object.entries(mappings)) {
+        check(adapter.includes(`${format}: ${event}`), `Revenue: ${provider} ${format} event binding is missing.`);
+      }
+    }
+
     if (targets.includes('android')) {
       const yandex = code(read('node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt'));
       for (const format of ['banner', 'interstitial', 'rewarded']) {

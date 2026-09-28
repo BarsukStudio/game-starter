@@ -325,7 +325,13 @@ export function getDebugSnapshot() {
 // one receipt, already correlated against what this file tracks; a transaction
 // itself stays an opaque handle it passes back to `verify`, `finish` and its own
 // delivery module.
+let storeInitialization = null;
 export async function initializeStore(callbacks = {}) {
+  if (!storeInitialization) storeInitialization = initializeStoreOnce(callbacks);
+  return storeInitialization;
+}
+
+async function initializeStoreOnce(callbacks) {
   const store = (await loadNamespace())?.store;
   if (!store) {
     console.warn('Purchase namespace unavailable; the store stays offline.');

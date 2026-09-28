@@ -272,7 +272,7 @@ Choose `--targets web`, `android`, `ios` or a comma-separated combination. Targe
 are explicit: a missing native folder must fail, not silently turn into a web-only
 check. Omit `--diagnostics` and the diagnostic test for a consumer without Firebase.
 If either diagnostic plugin is declared, the verifier also checks the full bundle.
-Consent checks activate when `src/js/platform/consent-signals.js` exists, or with
+Consent checks activate when a native adapter imports `../consent-signals.js`, or with
 `--consent`. For native targets they require Android registration before
 `super.onCreate`, the iOS bridge methods and initial storyboard controller,
 App Sources membership, and a bundled privacy manifest with UserDefaults reason
@@ -348,7 +348,8 @@ Before using these adapters in a native consumer:
 - Provide a localized settings entry when `getPrivacyOptionsState().available`
   is true; refresh it after initialization and when settings open. Save progress
   successfully before `showPrivacyOptions()`, refusing while purchase delivery
-  owns a pending save. On success reload to discard ads loaded under old choices.
+  owns a pending save. Before opening the form, call `resetAdsForPrivacy()` to retire Yandex native
+  requests/cached ads using the matching native patch. On success reload.
   On failure keep ads stopped and allow the form to be retried. The bridge refuses
   a duplicate form or one overlapping a fullscreen ad. Cleanup has a five-second
   deadline: timeout/rejection releases the busy state for another user attempt,
@@ -376,9 +377,47 @@ The [Console integration guide](../barsuk-studio-console/docs/analytics-workflow
 owns event schema, listener mappings, native forwarding requirements and export
 acceptance. Keep game IDs, releases and account state in consumer status files.
 
+To enable collection, add this import to both native adapters:
+
+```js
+import { bindAdRevenueEvents } from './ad-revenue.js';
+```
+
+After successful SDK initialization and before any preload, add the matching
+binding (including when remove-ads is owned):
+
+```js
+// native-admob.js
+await bindAdRevenueEvents(AdMob, 'admob', {
+  banner: BannerAdPluginEvents.AdPaid,
+  interstitial: InterstitialAdPluginEvents.AdImpression,
+  rewarded: RewardAdPluginEvents.AdImpression,
+}, config.testMode || config.useSampleAds || config.testingDevices?.length > 0);
+
+// native-yandex.js, after setUserConsent
+await bindAdRevenueEvents(YandexAds, 'yandex', {
+  banner: 'bannerImpression',
+  interstitial: 'interstitialImpression',
+  rewarded: 'rewardedImpression',
+}, APP_CONFIG.ads.nativeTestMode);
+```
+
 When `src/js/platform/ads/ad-revenue.js` exists, the shared plugin verifier checks
-its exact bytes against this template and Android Yandex forwarding for all three
-formats. On a template update, review schema compatibility and migrate consumers
+its exact bytes, both JS adapter bindings, and Android Yandex forwarding for all three
+formats. Copy `template/scripts/ad-revenue-wiring-check.mjs` into consumer scripts
+and run it: it drives all six real adapter bindings through the real collector
+to a fake Analytics SDK. Include it in `verify:js`. On a template update, review schema compatibility and migrate consumers
 explicitly; do not silently update a consumer from another checkout. The verifier
 proves source parity only, never Firebase receipt or revenue coverage. Existing
 published starter pins do not acquire these local additions automatically.
+
+## Candidate migration checks
+
+Contract 0.3.0 adds native lifecycle source strings and bound late reward tests.
+Read the current README for fixture controls and three-way template comparison.
+A native release requires consumer-owned `verify:js` and `verify:native` npm
+scripts; missing scripts fail the release rather than silently skipping checks.
+Do not copy consent policy from another game while applying transport fixes.
+Gym's owner-selected Yandex policy remains independent, without a consent form,
+with `userConsent: true`; this is an explicit consumer override, not an outcome
+inferred from UMP, ATT, locale, or this verifier.

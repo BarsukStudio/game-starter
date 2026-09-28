@@ -218,3 +218,23 @@ export const cases = [
     },
   },
 ];
+
+cases.push({
+  name: 'bound-reward-survives-ui-timeout-and-is-confirmed-once',
+  environment: 'portal-ads',
+  async run(harness) {
+    const { controller, names } = await started(harness);
+    let confirmations = 0;
+    startShow(controller.showRewardedAd(() => { confirmations++; }));
+    await reachSdk();
+    harness.controls.ads.rewarded.present();
+    harness.controls.clock.runAll();
+    const closed = count(names(), 'onRewardedClosed');
+    assert.equal(closed, 1);
+    harness.controls.ads.rewarded.complete();
+    harness.controls.ads.rewarded.complete();
+    assert.equal(confirmations, 1, 'UI timeout must not discard a confirmed view');
+    assert.equal(count(names(), 'onRewardedClosed'), closed);
+    assert.equal(count(names(), 'onRewardedComplete'), 0, 'bound and legacy paths must not both pay');
+  },
+});

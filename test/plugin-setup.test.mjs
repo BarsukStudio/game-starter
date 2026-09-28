@@ -26,8 +26,8 @@ function fixture(t, { diagnostics = true } = {}) {
   };
   const entries = { '': pkg };
   for (const [name, pin] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) {
-    const version = pin.startsWith('https:') ? '1.0.2' : pin;
-    entries[`node_modules/${name}`] = { version, resolved: pin, integrity: `fixture-${name}` };
+    const version = manifest.localArchives?.[name]?.version ?? (pin.startsWith('https:') ? '1.0.2' : pin);
+    entries[`node_modules/${name}`] = { version, resolved: pin, integrity: manifest.localArchives?.[name]?.integrity ?? `fixture-${name}` };
     write(`node_modules/${name}/package.json`, { name, version });
   }
   write('package.json', pkg);
@@ -233,6 +233,7 @@ test('the distributable carries the guide, reference versions and executable ver
 
 function consentFixture(t) {
   const app = fixture(t);
+  app.write('src/js/platform/ads/native-admob.js', "import { showIosConsentForm } from '../consent-signals.js';");
   app.write('src/js/platform/consent-signals.js', '// opt in to native consent checks');
   app.write('android/app/src/main/java/test/example/ConsentSignalsPlugin.java',
     fs.readFileSync(new URL('../template/native/android/ConsentSignalsPlugin.java', import.meta.url), 'utf8').replace('YOUR_APPLICATION_PACKAGE', 'test.example'));
@@ -303,9 +304,18 @@ test('revenue preflight rejects collector drift and missing native ILRD transpor
   const collector = fs.readFileSync(new URL('../template/platform/ads/ad-revenue.js', import.meta.url), 'utf8');
   const nativeFile = 'node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt';
   app.write('src/js/platform/ads/ad-revenue.js', collector);
+  for (const provider of ['admob', 'yandex']) {
+    const mappings = provider === 'admob'
+      ? 'banner: BannerAdPluginEvents.AdPaid, interstitial: InterstitialAdPluginEvents.AdImpression, rewarded: RewardAdPluginEvents.AdImpression'
+      : "banner: 'bannerImpression', interstitial: 'interstitialImpression', rewarded: 'rewardedImpression'";
+    app.write(`src/js/platform/ads/native-${provider}.js`, `import { bindAdRevenueEvents } from './ad-revenue.js';\nawait bindAdRevenueEvents(plugin, '${provider}', { ${mappings} }, false);`);
+  }
+
   app.write(nativeFile, ['banner', 'interstitial', 'rewarded'].map(format =>
     `notifyRequest("${format}Impression", adEvent(${format}AdUnitId).put("impressionData", impressionData?.rawData))`).join('\n'));
   assert.deepEqual(app.verify().errors, []);
+  app.write('src/js/platform/ads/native-admob.js', '// collector was copied but not wired');
+  assert.ok(app.verify().errors.some(error => error.includes('admob adapter must await')));
   app.write('src/js/platform/ads/ad-revenue.js', collector.replace('schema_revision: 1', 'schema_revision: 2'));
   app.write(nativeFile, '// notifyRequest("bannerImpression", adEvent(bannerAdUnitId).put("impressionData", impressionData?.rawData))');
   const errors = app.verify().errors;
@@ -313,4 +323,19 @@ test('revenue preflight rejects collector drift and missing native ILRD transpor
   for (const format of ['banner', 'interstitial', 'rewarded']) {
     assert.ok(errors.some(error => error.includes(`Yandex ${format} must forward`)));
   }
+});
+
+
+test('unused consent helper does not select the consumer consent policy', t => {
+  const app = fixture(t);
+  app.write('src/js/platform/consent-signals.js', '// legacy unused helper');
+  assert.deepEqual(app.verify().errors, []);
+});
+
+test('local runtime candidate rejects a different archive integrity', t => {
+  const app = fixture(t);
+  const lock = app.read('package-lock.json');
+  lock.packages['node_modules/@barsuk/game-runtime'].integrity = 'sha512-wrong';
+  app.write('package-lock.json', lock);
+  assert.ok(app.verify().errors.some(error => error.includes('reviewed integrity')));
 });

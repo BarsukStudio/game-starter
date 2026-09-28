@@ -143,3 +143,28 @@ export const cases = [
     },
   },
 ];
+
+
+cases.push({
+  name: 'repeated-initialization-keeps-first-callbacks-and-ownership',
+  environment: 'portal-ads',
+  async run({ createController, controls }) {
+    const controller = createController();
+    controls.ads.available(true);
+    const first = recordCallbacks('initializePlatformServices', { locale: 'en-US', removeAdsFlag: true });
+    const replacement = recordCallbacks('initializePlatformServices', { locale: 'en-US', removeAdsFlag: false });
+    await Promise.all([
+      controller.initializePlatformServices(first.bag),
+      controller.initializePlatformServices(replacement.bag),
+    ]);
+    await controller.initializePlatformServices(replacement.bag);
+    controller.preloadInterstitialAd();
+    controller.showInterstitialAd().catch(() => {});
+    await new Promise(resolve => setImmediate(resolve));
+    controls.ads.interstitial.present();
+    controls.ads.interstitial.complete();
+    assert.ok(first.names().includes('onInterstitialShowFailed'));
+    assert.equal(first.names().includes('onInterstitialShown'), false);
+    assert.deepEqual(replacement.log, [], 'repeat init must not replace the live callback bag');
+  },
+});

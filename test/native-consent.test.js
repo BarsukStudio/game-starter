@@ -126,7 +126,7 @@ function privacyFixture({ cleanup = async () => {}, active = false, error = fals
     nativeAdmob: { getNativeConsentInfo: () => ({privacyOptionsRequired: available}), hasPresentation: () => active,
       removeBanner: async () => { calls.push('remove-admob'); await cleanup(); },
       showNativePrivacyOptions: () => { calls.push('form'); return error ? Promise.reject(Error('form')) : new Promise(r => {complete=r;}); } },
-    nativeYandex: { hasPresentation: () => false, removeBannerIfAvailable: async () => calls.push('remove-yandex') },
+    nativeYandex: { hasPresentation: () => false, resetAdsForPrivacy: async () => calls.push('reset-yandex') },
   };
   vm.createContext(context);
   vm.runInContext(privacySource + '\nglobalThis.open = showPrivacyOptions; globalThis.stopped = () => Boolean(state.privacyAdsStopped);', context);
@@ -137,7 +137,7 @@ test('privacy form blocks ads before banner removal; duplicate request is refuse
   assert.equal(f.context.stopped(),true);
   assert.equal(await f.context.open(),false);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(f.calls,['remove-admob','remove-yandex','form']);
+  assert.deepEqual(f.calls,['remove-admob','reset-yandex','form']);
   f.finish(); assert.equal(await first,true);
   assert.equal(f.context.stopped(),true, 'old ads remain blocked until caller reloads');
 });
