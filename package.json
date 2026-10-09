@@ -1,6 +1,6 @@
 {
   "name": "@barsuk/game-starter",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.22",
   "description": "The versioned platform contract and starter template shared by Barsuk Studio games",
   "type": "module",
   "private": true,
@@ -15,13 +15,15 @@
     "./template/config-schema": "./template/schemas/config.schema.js",
     "./template/build-config-schema": "./template/schemas/build.config.schema.mjs",
     "./package.json": "./package.json",
-    "./template/plugins-manifest": "./template/plugins-manifest.json"
+    "./template/plugins-manifest": "./template/plugins-manifest.json",
+    "./testing/native-ads": "./testing/native-ads.mjs"
   },
   "files": [
     "contract",
     "template",
     "tools",
-    "PLUGINS.md"
+    "PLUGINS.md",
+    "testing"
   ],
   "scripts": {
     "test": "node --test"
@@ -33,6 +35,7 @@
   "sideEffects": false,
   "bin": {
     "barsuk-verify-plugins": "./tools/verify-plugin-setup.mjs",
-    "barsuk-compare-template": "./tools/compare-template.mjs"
+    "barsuk-compare-template": "./tools/compare-template.mjs",
+    "barsuk-export-template": "./tools/export-template.mjs"
   }
 }

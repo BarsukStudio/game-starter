@@ -43,6 +43,7 @@ export function createPlatformController() {
     supportsRestorePurchases: bridge.supportsRestorePurchases,
     initializePurchaseStore: bridge.initializePurchaseStore,
     verifyPurchaseTransaction: bridge.verifyPurchaseTransaction,
+    describePurchaseTransaction: bridge.describePurchaseTransaction,
     getPurchaseProducts: bridge.getPurchaseProducts,
     getPurchasePrices: bridge.getPurchasePrices,
     orderPurchase: bridge.orderPurchase,

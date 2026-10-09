@@ -20,6 +20,8 @@ function fixture({ native = true, platform = 'android', fail = false } = {}) {
       if (fail) throw new Error('Firebase failed');
     } },
   };
+  const idSource = fs.readFileSync(new URL('../request-id.js', moduleUrl), 'utf8');
+  vm.runInNewContext(idSource.replace(/^export /gm, ''), context);
   vm.runInNewContext(source.replace(/^import .*;\n/gm, '').replace(/^export /gm, ''), context);
   const plugin = { addListener: async (name, handler) => {
     assert.ok(!listeners.has(name), 'must not register twice');
@@ -78,12 +80,35 @@ test('Yandex absent/malformed ILRD is diagnostic, never a zero-revenue impressio
   }
 });
 
-test('web and iOS do not bind revenue listeners or call Firebase', async () => {
-  for (const options of [{ native: false }, { platform: 'ios' }]) {
+test('web and unsupported native platforms do not bind revenue listeners or call Firebase', async () => {
+  for (const options of [{ native: false }, { platform: 'web' }, { platform: 'desktop' }]) {
     const f = fixture(options);
     await f.bindAdRevenueEvents(f.plugin, 'admob', { banner: 'paid' }, false);
     assert.equal(f.listeners.size, 0);
     assert.equal(f.calls.length, 0);
+  }
+});
+
+test('iOS binds all formats once and preserves reported, missing and invalid revenue', async () => {
+  for (const provider of ['admob', 'yandex']) {
+    const f = fixture({ platform: 'ios' });
+    const events = { banner: 'bannerPaid', interstitial: 'interstitialPaid', rewarded: 'rewardedPaid' };
+    await Promise.all([1, 2].map(() => f.bindAdRevenueEvents(f.plugin, provider, events, true)));
+    const valid = provider === 'admob' ? { ...paid, valueMicros: 0 }
+      : { impressionData: JSON.stringify({ revenue: '0', currency: 'USD', precision: 'estimated' }) };
+    f.listeners.get(events.banner)(valid);
+    f.listeners.get(events.interstitial)({});
+    f.listeners.get(events.rewarded)(provider === 'admob' ? { ...paid, valueMicros: -1 } : { impressionData: '{' });
+    await flush();
+    assert.equal(f.listeners.size, 3);
+    assert.equal(f.calls.length, 3);
+    assert.deepEqual(f.calls.map(event => event.params.revenue_status), ['reported', 'missing', 'invalid']);
+    assert.equal(f.calls[0].params.revenue_amount, 0);
+    assert.equal(f.calls[0].params.revenue_currency, 'USD');
+    assert.equal(f.calls[1].params.revenue_amount, undefined);
+    assert.equal(f.calls[2].params.revenue_amount, undefined);
+    assert.ok(f.calls.every(event => event.name === 'bs_ad_revenue' && event.params.test_ads === 1));
+    assert.equal(new Set(f.calls.map(event => event.params.callback_id)).size, 3);
   }
 });
 

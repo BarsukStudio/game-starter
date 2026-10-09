@@ -8,11 +8,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { cases } from '../contract/cases/index.mjs';
+import { cases as adCases } from '../contract/cases/ads.mjs';
 
 // Frozen at contract 0.1.0. Adding a case is an edit here; so is removing one.
 const CANONICAL = [
     'a-show-attempt-always-ends-in-a-terminal-callback',
     'ads-removed-suppresses-the-interstitial',
+    'an-approved-transaction-description-identifies-its-product',
     'an-approved-transaction-reaches-the-game-as-an-opaque-handle',
     'binding-the-native-lifecycle-accepts-no-handlers-at-all',
     'binding-the-native-lifecycle-is-safe-off-native',
@@ -20,6 +22,8 @@ const CANONICAL = [
     'controller-exposes-exactly-the-manifest',
     'every-contract-method-is-callable',
     'exiting-the-app-is-safe-off-native',
+    'false-after-failure-does-not-finish-the-next-request',
+    'false-for-busy-rewarded-keeps-the-accepted-request',
     'generic-web-privacy-options-are-unavailable',
     'hide-native-status-bar-is-safe-off-native',
     'initialize-accepts-the-contract-bag-and-resolves',
@@ -38,6 +42,7 @@ const CANONICAL = [
     'prices-become-strings-once-the-store-has-answered',
     'products-are-a-map-of-configured-keys-to-store-ids',
     'purchase-capabilities-answer-before-the-store-is-up',
+    'purchase-description-is-plain-data-without-a-store',
     'repeated-initialization-keeps-first-callbacks-and-ownership',
     'restore-delegates-to-the-store-and-answers-a-promise',
     'rewarded-completes-at-most-once-per-show',
@@ -53,7 +58,10 @@ const CANONICAL = [
 test('the canonical cases are exactly these', () => {
     assert.deepEqual(
         cases.map(({ name }) => name).sort(),
-        CANONICAL,
+        [...CANONICAL, ...['native-admob-ads', 'native-yandex-ads'].flatMap(environment => [
+          ...adCases.map(({ name }) => `${environment}: ${name}`),
+          ...['interstitial', 'rewarded'].map(format => `${environment}: ${format} reserves both formats until native termination`),
+        ])].sort(),
         'a case joining or leaving the contract is an edit to this list'
     );
 });
@@ -73,5 +81,5 @@ test('every case is runnable', () => {
 // than a list to maintain: it is the cases that decide, not this file.
 test('the suite asks for a small, stable set of environments', () => {
     const asked = [...new Set(cases.map(({ environment }) => environment))].sort();
-    assert.deepEqual(asked, ['generic-web', 'native-store', 'portal-ads', 'portal-refusing']);
+    assert.deepEqual(asked, ['generic-web', 'native-admob-ads', 'native-store', 'native-yandex-ads', 'portal-ads', 'portal-refusing']);
 });

@@ -11,7 +11,7 @@ for (const format of ['interstitial', 'rewarded']) for (const boundDismissal of 
   test(`Yandex ${format}: boundDismissal=${boundDismissal} isolates later shows`, async () => {
     const listeners = new Map(), calls = [], events = [];
     const sdk = {
-      initialize: async () => {}, setUserConsent: async () => {},
+      resetAds: async () => {}, initialize: async () => {}, setUserConsent: async () => {},
       addListener: async (name, callback) => { listeners.set(name, callback); },
     };
     for (const method of ['showInterstitial', 'showRewarded']) {
@@ -21,14 +21,17 @@ for (const format of ['interstitial', 'rewarded']) for (const boundDismissal of 
     const stub = url(`
       export const prepareNativeConsent = async () => ({canRequestAds: true, yandexConsent: false});
       export const requestIosTrackingAuthorization = async () => {};
+      export const waitForConsentRetry = async () => {};
       export const YandexAds = globalThis.__yandexPresentationTest;
       export const APP_CONFIG = { ads: {} };
       export const debugLog = () => {};
       export const getNativeKey = () => 'android';
+      export const bindAdRevenueEvents = async () => {};
+      export const createBannerTelemetry = () => ({ stop() {} });
       // ${++sequence}
     `);
     const rewritten = source.replace(/from '([^']+)'/g, (_, name) =>
-      `from ${JSON.stringify(name === './native-ad-events.js' ? router : stub)}`)
+      `from ${JSON.stringify(name === './native-ad-events.js' ? router : name === '../request-id.js' ? new URL('../template/platform/request-id.js', import.meta.url).href : stub)}`)
       .replace("import('capacitor-plugin-yandex-ads')", `import(${JSON.stringify(stub)})`);
     const adapter = await import(url(rewritten));
     delete globalThis.__yandexPresentationTest;

@@ -45,6 +45,7 @@ const SEAM_FIXTURES = new Map([
   ['@barsuk/game-runtime/purchase-delivery', 'purchase-delivery.js'],
   ['@barsuk/game-runtime/purchase-finish', 'purchase-finish.js'],
   ['@capacitor-community/admob', 'admob-sdk.js'],
+  ['@capacitor-firebase/analytics', 'firebase-analytics.js'],
   ['@capacitor/app', 'capacitor-app.js'],
   ['@capacitor/core', 'capacitor-core.js'],
   ['@capacitor/splash-screen', 'splash-screen.js'],

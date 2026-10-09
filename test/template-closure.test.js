@@ -30,7 +30,7 @@ test('the native patch asset ships beside its runner', () => {
   const patch = fs.readFileSync(path.join(templateRoot, 'scripts/patches/native-ad-request-ids.patch'), 'utf8');
   assert.equal((patch.match(/^--- a\/node_modules\//gm) ?? []).length, 2);
   assert.ok(patch.includes('requestId'));
-  assert.ok(runner.includes("import './verify-admob.mjs'"));
+  assert.ok(runner.includes("await import('./verify-admob.mjs')"));
   assert.ok(fs.existsSync(path.join(templateRoot, 'scripts/admob-files.json')));
   assert.ok(!patch.includes('@capacitor-community/admob'));
 

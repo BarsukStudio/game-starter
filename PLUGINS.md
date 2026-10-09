@@ -17,7 +17,7 @@ generic installer for arbitrary Xcode projects, Kotlin DSL, SPM or Electron/Taur
 | `platform.dependencies`, `platform.devDependencies` | Every consumer of the current full platform template, including its web builds |
 | `android.dependencies`, `android.devDependencies` | Android target |
 | `ios.dependencies`, `ios.devDependencies` | iOS target |
-| `diagnostics.dependencies` | Optional Firebase bundle: Analytics, Crashlytics, Performance and app configuration |
+| `diagnostics.dependencies` | Optional Firebase diagnostics: Crashlytics, Performance and app configuration; Analytics belongs to `platform.dependencies` |
 
 The current bridge imports the app-shell and ad adapters; even web builds of
 this template must resolve their npm packages. Disabling ads or providing an
@@ -26,10 +26,12 @@ A browser prototype that does not use this platform template does not need its
 Capacitor packages. Separating all existing adapters into dependency-free feature
 packages is outside this recipe.
 
-Firebase is different: the base template never imports `diagnostics.js`. A
-consumer without diagnostics omits that file, its test and the two lifecycle
-edits below. Do not import a Firebase module and rely on `isNative` to avoid
-installing its dependencies; the bundler still resolves imports.
+Both native advertising variants bind the revenue collector and import Firebase
+Analytics by default. Analytics therefore belongs to the base dependency set.
+Crashlytics/Performance remain optional: the base template never imports
+`diagnostics.js`. A consumer without diagnostics omits that file, its test and
+the two lifecycle edits below. Do not rely on `isNative` to avoid installing an
+imported dependency; the bundler still resolves it.
 
 ## 1. Dependencies and source files
 
@@ -58,6 +60,14 @@ existing blocks; never overwrite an entire native file with a snippet.
 
 ## 2. Native advertising and purchases
 
+- The default purchase package remains the published baseline. An optional
+  reviewed local archive is listed in `acceptedPins` and `localArchives` in
+  `template/plugins-manifest.json`. Its only native change supplies application
+  metadata on iOS 15, where StoreKit 2 supports purchases/Restore but
+  `AppTransaction` requires iOS 16. Product verification and entitlement delivery
+  remain unchanged. Copy the exact archive into the consumer's `vendor/`, pin it
+  explicitly and verify lockfile/installed metadata. The archive does not ship
+  inside this starter. Adoption requires iOS 15 and iOS 16+ sandbox Restore QA.
 - Put the game's ad units, provider policy, store links and product catalogue in
   its platform config. Register the real products in each store separately.
 - Android AdMob needs the game's AdMob application ID in the application manifest:
@@ -77,7 +87,7 @@ existing blocks; never overwrite an entire native file with a snippet.
   Mediation network choice, versions and dashboard mappings are not certified by
   the plugin verifier.
 - Copy `template/scripts/patch-native-ad-events.mjs`, `verify-admob.mjs`,
-  `admob-files.json` and the adjacent `patches/` directory together. Merge its invocation into `postinstall` and
+  `admob-files.json`, `patch-yandex-sdk.mjs` and the adjacent `patches/` directory together. Merge its invocation into `postinstall` and
   `prebuild`, retaining existing hooks. The runner needs Git and the game root:
 
   ```sh
@@ -92,12 +102,32 @@ existing blocks; never overwrite an entire native file with a snippet.
 
   The native release builder and Android sync run `--check` explicitly; direct
   Vite invocation does not run npm's `prebuild` hook. Keep this preflight when
-  copying those scripts. AdMob uses the official pinned package: the runner applies only Yandex request
-  identities and verifies AdMob file hashes. The template hash manifest is stock;
+  copying those scripts. AdMob uses the official pinned package: the runner applies the UMP error-metadata and Yandex lifecycle patches
+  and verifies AdMob file hashes. The template hash manifest includes the consent-error patch;
   an approved consumer banner geometry patch may change only BannerExecutor.java's
   hash after comparison with the official integrity-verified npm archive. No custom
-  initialization, consent-error or request-ID patches, and no JS banner retries.
-  Stock consent errors disable ads for the current initialization.
+  initialization or request-ID patches. The consent-error patch preserves UMP's
+  current `canRequestAds` and privacy requirement on errors; only explicit true
+  permits requests. Transient UMP errors use three attempts (5/15 seconds), then
+  retry on network/foreground signals with a 30-second cooldown, reusing SDK init.
+  Completed ineligible decisions and configuration errors are not retried;
+  REQUIRED with no available form remains retryable readiness.
+  AdMob removes failed banners in both native plugins, so JS owns bounded
+  recovery (5/10/20 seconds). Activity/network signals can reopen an exhausted
+  budget after 30 seconds; healthy banners retain SDK refresh. Remove Ads and
+  explicit banner removal cancel recovery.
+  Yandex keeps its native banner alive after load/refresh errors; its SDK alone
+  owns recovery, with no copied JS retry timers. The reproducible Yandex patch
+  includes this fix and stale callback protection alongside request identities.
+
+  The pinned Yandex bridge also receives the reviewed iOS SDK pin through
+  `patch-yandex-sdk.mjs`; its source podspec is maintained in the plugin repository.
+  Keep this file alongside the patch runner, including in native sync preflights.
+
+  AdMob 8.2 fixes iOS revenue micros and preserves native load-error codes.
+  Revenue remains divided by 1,000,000; do not compensate iOS values a second time.
+  Native initialization can reject while the Android parent view is unavailable;
+  retain lifecycle recovery and the independent game/store startup.
 
   A pending banner Promise must not block fullscreen setup. Start the store
   independently of advertising initialization, with a bounded entitlement wait
@@ -108,6 +138,13 @@ The Kotlin plugin classpath is needed by the native ad stack. Keep root Gradle
 classpath injections in `BUILD_CONFIG.android.rootGradleClasspaths` as well.
 For iOS, set the Podfile deployment target from `ios.deploymentTarget`; align the
 App target deployment setting in Xcode. Native SDKs are registered by the sync in step 4.
+
+Firebase Analytics also needs native app configuration: on Android apply Google
+Services and keep a matching `android/app/google-services.json`; on iOS bundle the
+matching `GoogleService-Info.plist`, initialize FirebaseCore and add the Analytics
+subspec described below. These steps apply to revenue collection even without
+Crashlytics/Performance. Native app registration and real event delivery are
+consumer acceptance steps; the starter supplies no Firebase identity.
 
 ## 3. Optional Firebase diagnostics
 
@@ -272,7 +309,7 @@ Choose `--targets web`, `android`, `ios` or a comma-separated combination. Targe
 are explicit: a missing native folder must fail, not silently turn into a web-only
 check. Omit `--diagnostics` and the diagnostic test for a consumer without Firebase.
 If either diagnostic plugin is declared, the verifier also checks the full bundle.
-Consent checks activate when a native adapter imports `../consent-signals.js`, or with
+Legacy ConsentSignals checks activate when a native adapter imports `../consent-signals.js`, or with
 `--consent`. For native targets they require Android registration before
 `super.onCreate`, the iOS bridge methods and initial storyboard controller,
 App Sources membership, and a bundled privacy manifest with UserDefaults reason
@@ -327,24 +364,37 @@ or ad SDK must not keep the local screen hidden. The bootstrap trace now measure
 local readiness; compare it with older purchase-gated traces only with that
 boundary change in mind.
 
-Native ad adapters share one UMP update per launch, before ATT and either SDK.
-UMP errors disable native ads for that launch. Yandex receives the native UMP
-region/additional-consent signals, never a permission inferred from language or
-ATT. The installed AdMob plugin remains stock except for the banner geometry
-patch. SDK versions, ad IDs and store product IDs do not change for this migration.
+The AdMob/Yandex variant uses separate consent flows. AdMob initializes its stock
+plugin before requesting UMP information or opening the required form, including
+on iOS where the plugin needs an initialized controller. Ad requests and preloads
+start only when UMP returns `canRequestAds === true`; that flag permits requesting
+ads under the user's choices and does not assert consent to personalization.
+Completed UMP decisions are reused within the WebView launch. On errors, the
+approved native patch returns current UMP eligibility; only explicit true allows
+requests. Technical failures can recover on network/foreground signals under the
+bounded policy above, without repeating successful SDK initialization.
+
+Yandex starts independently of UMP, with `userConsent: true` and
+`setUserConsent({ value: true })`. It does not read UMP choices or open an AdMob
+consent form. If automatic routing falls back from a failed Yandex initialization
+to AdMob, AdMob runs its own UMP flow. Both providers retain the separate iOS ATT
+request when the system status is `notDetermined`; refusal or a bridge failure
+does not change the Yandex consent flag. ATT permission remains separate from
+data-processing consent. CAS uses its own consent flow in its variant.
+
+The current adapters use the stock AdMob consent and privacy forms and do not
+require a ConsentSignals bridge. The retained `consent-signals.js` and native
+bridge sources support older consumers that explicitly use them. Such consumers
+must preserve Android registration before `super.onCreate`, iOS App Sources and
+controller registration, and the bundled UserDefaults privacy reason described
+by the legacy preflight. Do not copy this legacy integration into a new consumer
+solely to use the current adapters. SDK versions, ad IDs and store product IDs
+do not change for this template update.
 
 Before using these adapters in a native consumer:
 
-- Copy `template/native/android/ConsentSignalsPlugin.java` into the application
-  package, replace `YOUR_APPLICATION_PACKAGE`, and register the plugin in
-  `MainActivity.onCreate` before `super.onCreate`.
-- Add `template/native/ios/ConsentSignalsPlugin.swift` to the application target's
-  Sources. Set the main storyboard controller to `GameBridgeViewController` in
-  the application module (or register the plugin in an existing custom controller).
-  Merge the supplied UserDefaults reason into the app's privacy manifest and
-  include that manifest in Resources. Do not replace an existing manifest.
-- UMP is already supplied by the pinned AdMob dependency. The iOS consent bridge
-  uses Capacitor's controller so consent can appear before ad SDK initialization.
+- UMP is supplied by the pinned AdMob dependency. Keep stock AdMob initialization
+  before its consent/privacy forms and preserve the iOS ATT usage description.
 - Provide a localized settings entry when `getPrivacyOptionsState().available`
   is true; refresh it after initialization and when settings open. Save progress
   successfully before `showPrivacyOptions()`, refusing while purchase delivery
@@ -356,35 +406,36 @@ Before using these adapters in a native consumer:
   keeps ads stopped, and does not open UMP. Only a successful cleanup can open the
   form. A late cleanup completion cannot open a form or clear a newer attempt.
   The native form itself is not timed out, to avoid overlapping native forms.
-  UMP update errors continue to block both native providers until restart.
+  UMP update errors block AdMob requests for that initialization, without gating
+  Yandex startup.
 
-This migration was exercised in Gym2 and Miner with source tests, browser checks,
-and local native builds; real consent/ATT, ads and purchase behavior still require
-device QA. Existing pinned consumers need an explicit migration. A template edit
+The independent consent policy matches Gym and the saved pre-CAS Gym2 adapters.
+Template tests check initialization order, UMP eligibility, Yandex independence,
+ATT refusal and privacy cleanup. Real consent/ATT, ads and purchase behavior still
+require device QA. Existing pinned consumers need an explicit migration. A template edit
 never rewrites connected games automatically. Package publication/pin updates for
 new template changes are a separate step.
 
 
-## Optional Android ad revenue collector
+## AdMob/Yandex Android and iOS ad revenue collector
 
 `template/platform/ads/ad-revenue.js` is the shared consumer-neutral collector
 originally exercised in Gym and adopted unchanged in Gym2. `template/scripts/ad-revenue-test.mjs` ships its normalization suite for
-consumer `scripts/`. It is opt-in: copy it
-and wire both native adapters explicitly; the base template does not import
-Firebase Analytics on behalf of games that do not use collection. It emits no
-custom revenue on iOS or web. This is adapter transport, not headless runtime.
+consumer `scripts/`. Fresh AdMob exports include the collector, both native
+adapter bindings and the required Firebase Analytics dependency. Existing
+consumers adopt these changes through an explicit template migration. It collects custom revenue on Android and iOS; web does not bind native listeners. This is adapter transport, not headless runtime.
 The [Console integration guide](../barsuk-studio-console/docs/analytics-workflow.md#connect-android-ad-revenue-collection-in-another-game)
 owns event schema, listener mappings, native forwarding requirements and export
 acceptance. Keep game IDs, releases and account state in consumer status files.
 
-To enable collection, add this import to both native adapters:
+Both native adapters import the binding:
 
 ```js
 import { bindAdRevenueEvents } from './ad-revenue.js';
 ```
 
-After successful SDK initialization and before any preload, add the matching
-binding (including when remove-ads is owned):
+After successful SDK initialization and before any preload, they bind the
+matching events (including when remove-ads is owned):
 
 ```js
 // native-admob.js
@@ -403,8 +454,9 @@ await bindAdRevenueEvents(YandexAds, 'yandex', {
 ```
 
 When `src/js/platform/ads/ad-revenue.js` exists, the shared plugin verifier checks
-its exact bytes, both JS adapter bindings, and Android Yandex forwarding for all three
-formats. Copy `template/scripts/ad-revenue-wiring-check.mjs` into consumer scripts
+its exact bytes, both JS adapter bindings, and Android/iOS Yandex forwarding for all three
+formats. The native patch preserves request identity and forwards the iOS SDK
+raw JSON as `impressionData`, or `null` when absent; missing revenue stays unknown. Copy `template/scripts/ad-revenue-wiring-check.mjs` into consumer scripts
 and run it: it drives all six real adapter bindings through the real collector
 to a fake Analytics SDK. Include it in `verify:js`. On a template update, review schema compatibility and migrate consumers
 explicitly; do not silently update a consumer from another checkout. The verifier
@@ -421,3 +473,100 @@ Do not copy consent policy from another game while applying transport fixes.
 Gym's owner-selected Yandex policy remains independent, without a consent form,
 with `userConsent: true`; this is an explicit consumer override, not an outcome
 inferred from UMP, ATT, locale, or this verifier.
+
+## CAS native stack
+
+Choose `--native-stack cas` with `barsuk-export-template`; keep the consumer's
+`ads.nativeStack: 'cas'` in config. Set explicit `ads.cas.audience` (`children`,
+`notChildren` or `undefined`) and `ads.cas.android.casId` / `ads.cas.ios.casId`.
+Do not include legacy AdMob/Yandex native IDs or provider-switch storage keys.
+The `admob` template selection preserves the existing two-provider routing.
+
+Use the CAS package pins and reviewed local archive integrity in
+`template/plugins-manifest.json`; the runtime baseline is 0.2.2 as a reviewed local archive. The older reviewed
+source commit remains accepted for attempt-driven providers; CAS requires
+`setAvailability` and rejects a runtime without it. Consumers retain their
+existing pins until explicitly migrated. CAS telemetry requires Firebase Analytics.
+
+CAS `native-analytics.js` forwards events directly, without a CMP queue or a
+CAS completion gate. Native startup enables technical collection even when CAS
+is unavailable, explicitly overriding the technical `false` persisted by older
+releases. This app policy assumes no separate user-facing collection opt-out;
+a consumer adding one must honor it at native startup. Collection enablement
+never grants `analytics_storage`, `ad_storage`, `ad_user_data` or
+`ad_personalization`. Persisted consent and regional defaults remain in force.
+CAS `obtained` means completion, not permission for personalized advertising.
+Native CMP/Firebase propagation must be verified separately for acceptance,
+refusal, withdrawal and restart on each platform; iOS remains a device gate.
+Crashlytics/Performance bootstrap diagnostics remain separate.
+
+In AndroidManifest.xml, set `firebase_analytics_collection_enabled=true`,
+`google_analytics_tcf_data_enabled=true`. For an explicitly `notChildren` CAS
+audience, set `google_analytics_default_allow_ad_storage=true` and set
+`google_analytics_default_allow_ad_user_data` and
+`google_analytics_default_allow_ad_personalization_signals` to the string
+`eu_consent_policy`. Child/unspecified audiences keep all three defaults false.
+The regional policy is resolved by Firebase; do not translate CAS `obtained`
+or `notRequired` into blanket runtime grants. TCF choices override manifest
+defaults, including persisted refusal. UMP applies consent-mode updates for
+users subject to EU regulations; other users rely on the configured defaults
+([UMP consent mode](https://developers.google.com/admob/android/privacy/consent-mode)).
+A global manifest denial is not a
+regional policy: Firebase's TCF mapper does not update consent when
+`gdprApplies=0`, so that denial can persist after a successful CAS flow.
+See [Firebase consent defaults](https://developers.google.com/tag-platform/security/guides/app-consent?platform=android).
+Register the consumer's Application class and call
+`FirebaseAnalytics.getInstance(this).setAnalyticsCollectionEnabled(true)` from
+its `onCreate`, before WebView startup, to recover persisted technical disablement.
+Add `implementation "com.google.firebase:firebase-analytics:$firebaseAnalyticsVersion"`
+to app/build.gradle, using the reviewed Firebase version in variables.gradle.
+For iOS use the same values with uppercase equivalents in Info.plist
+(`eu_consent_policy` must be a string, not a boolean):
+`FIREBASE_ANALYTICS_COLLECTION_ENABLED`, `GOOGLE_ANALYTICS_TCF_DATA_ENABLED`,
+`GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_STORAGE`,
+`GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_USER_DATA`, and
+`GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS`.
+After `FirebaseApp.configure()` in AppDelegate, call
+`Analytics.setAnalyticsCollectionEnabled(true)` before creating the WebView.
+The verifier checks these native prerequisites and independent JS transport. Defaults and
+local compilation do not prove effective consent or Firebase delivery: check
+clean install, subsequent launch, refusal and revocation on Android/iOS.
+
+Android uses the manifest's CAS Gradle plugin version, applies
+`com.cleveradssolutions.gradle-plugin`, and selects `includeOptimalAds = true`
+with the consumer CAS ID. iOS adds the CAS Specs source and pins
+`CleverAdsSolutions-SDK/Optimal` to the manifest SDK version. Remove standalone
+AdMob/Yandex Capacitor bridges and ConsentSignals registration, then sync using
+the consumer workflow. Mediated Google/Yandex SDKs supplied by CAS are separate
+from those removed bridges. Keep consumer Firebase/app/store IDs unchanged.
+
+`barsuk-verify-plugins --targets android,ios` checks plugin archive bytes,
+lock/installed metadata, registration, SDK pins, collector parity and legacy
+bridge absence. CAS owns consent/ATT and Autoload; the game owns explicit show
+policy, rewards and Remove Ads. Successful privacy changes retire old inventory
+and rebuild readiness before new ads. Default builds use test ads; release
+scripts require `verify:js` and `verify:native`, force production mode and inspect
+the built assets before sync. Account activation, audience selection, native
+privacy forms and exactly one standard Firebase `ad_impression` sender require
+separate device/account acceptance. JS sends only diagnostic `bs_ad_revenue`.
+
+For CAS iOS releases, `build-native-release.mjs ios` runs
+`prepare-cas-ios.mjs` after consumer verification and before asset generation.
+Export includes `native/ios/casconfig.rb`, the reviewed script 2.2 with
+`OTHER_LDFLAGS` normalization for Capacitor scalar settings; preparation
+copies this seed into `ios/App` only when no script is present. An existing
+script must match the reviewed hash. Configuration uses the numeric literal
+`ads.cas.ios.casId` from the consumer platform config, then checks completion,
+CAS ID, Google Ads App ID matching the downloaded CAS settings, SKAdNetwork
+entries, a nonempty JSON resource and its membership in the
+App target. The vendor's 12-hour configuration cache remains in effect.
+Failures stop the release before assets or sync; debug builds do not execute
+this step. Updating the Ruby script requires explicit review and a new hash.
+Ruby with the existing CocoaPods `xcodeproj` gem and configuration-service
+connectivity are required; no executable latest script is fetched during build.
+
+The configuration refresh may replace the iOS `GADApplicationIdentifier` with
+the ID assigned by CAS in its downloaded settings. This is mediated Google SDK
+configuration, not a change to the game CAS ID, bundle ID, Firebase project or
+purchase products. CAS requires its assigned ID rather than a standalone AdMob
+ID: https://docs.page/cleveradssolutions/docs/iOS/Manually-configure-project

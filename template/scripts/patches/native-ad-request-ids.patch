@@ -1,3 +1,236 @@
+--- a/node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt
++++ b/node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt
+@@ -72,6 +72,31 @@
+         }
+     }
+
++    // A WebView reload does not destroy this native plugin.
++    @PluginMethod
++    fun resetAds(call: PluginCall) = runOnMainThread {
++        if (interstitialShowCall != null || rewardedShowCall != null) {
++            call.reject("An ad is already showing", "AD_SHOW_IN_PROGRESS")
++            return@runOnMainThread
++        }
++        val interstitialCall = interstitialLoadCall
++        val rewardedCall = rewardedLoadCall
++        interstitialLoadCall = null
++        rewardedLoadCall = null
++        interstitialAdLoader?.cancelLoading()
++        rewardedAdLoader?.cancelLoading()
++        interstitialAdLoader = null
++        rewardedAdLoader = null
++        interstitialCall?.reject("Privacy choices are changing", "ADS_RESET")
++        rewardedCall?.reject("Privacy choices are changing", "ADS_RESET")
++        bannerLoadCall?.reject("Privacy choices are changing", "ADS_RESET")
++        bannerLoadCall = null
++        destroyBannerAd()
++        destroyInterstitialAd()
++        destroyRewardedAd()
++        call.resolve()
++    }
++
+     @PluginMethod
+     fun setUserConsent(call: PluginCall) = setBoolean(call, YandexAds::setUserConsent)
+
+@@ -99,10 +124,12 @@
+         bannerAdUnitId = adUnitId
+         bannerLoadCall = call
+         val bannerSize = BannerAdSize.sticky(context, context.resources.configuration.screenWidthDp)
+-        val banner = BannerAdView(context).apply {
++        val banner = BannerAdView(context)
++        banner.apply {
+             setAdSize(bannerSize)
+             setBannerAdEventListener(object : BannerAdEventListener {
+                 override fun onAdLoaded() {
++                    if (bannerAdView !== banner) return
+                     val result = bannerResult(bannerAdUnitId, bannerSize)
+                     notifyListeners("bannerLoaded", result)
+                     bannerLoadCall?.resolve(result)
+@@ -110,16 +137,17 @@
+                 }
+
+                 override fun onAdFailedToLoad(error: AdRequestError) {
++                    if (bannerAdView !== banner) return
+                     val event = errorEvent(bannerAdUnitId, error.code, error.description)
+                     notifyListeners("bannerFailedToLoad", event)
+                     bannerLoadCall?.reject(error.description, "BANNER_LOAD_FAILED")
+                     bannerLoadCall = null
+-                    destroyBannerAd()
++                    // Keep the view alive: the SDK owns banner refresh and recovery.
+                 }
+
+                 override fun onAdClicked() = notifyListeners("bannerClicked", adEvent(bannerAdUnitId))
+                 override fun onImpression(impressionData: ImpressionData?) =
+-                    notifyListeners("bannerImpression", adEvent(bannerAdUnitId))
++                    notifyListeners("bannerImpression", adEvent(bannerAdUnitId).put("impressionData", impressionData?.rawData))
+             })
+         }
+         bannerAdView = banner
+@@ -144,6 +172,11 @@
+
+     @PluginMethod
+     fun prepareInterstitial(call: PluginCall) = runOnMainThread {
++        val requestId = call.getString("requestId") ?: ""
++        fun notifyRequest(event: String, payload: JSObject) {
++            payload.put("requestId", requestId)
++            notifyListeners(event, payload)
++        }
+         val adUnitId = requireAdUnitId(call) ?: return@runOnMainThread
+         if (!requireInitialized(call)) return@runOnMainThread
+         if (interstitialLoadCall != null) {
+@@ -162,16 +195,18 @@
+         val request = AdRequest.Builder(adUnitId).build()
+         interstitialAdLoader?.loadAd(request, object : InterstitialAdLoadListener {
+             override fun onAdLoaded(interstitialAd: InterstitialAd) {
++                if (interstitialLoadCall !== call) return
+                 this@YandexAdsPlugin.interstitialAd = interstitialAd
+-                notifyListeners("interstitialLoaded", adEvent(interstitialAdUnitId))
+-                interstitialLoadCall?.resolve()
++                notifyRequest("interstitialLoaded", adEvent(interstitialAdUnitId))
++                call.resolve()
+                 interstitialLoadCall = null
+             }
+
+             override fun onAdFailedToLoad(error: AdRequestError) {
++                if (interstitialLoadCall !== call) return
+                 val event = errorEvent(interstitialAdUnitId, error.code, error.description)
+-                notifyListeners("interstitialFailedToLoad", event)
+-                interstitialLoadCall?.reject(error.description, "INTERSTITIAL_LOAD_FAILED")
++                notifyRequest("interstitialFailedToLoad", event)
++                call.reject(error.description, "INTERSTITIAL_LOAD_FAILED")
+                 interstitialLoadCall = null
+             }
+         })
+@@ -184,6 +219,11 @@
+
+     @PluginMethod
+     fun showInterstitial(call: PluginCall) = runOnMainThread {
++        val requestId = call.getString("requestId") ?: ""
++        fun notifyRequest(event: String, payload: JSObject) {
++            payload.put("requestId", requestId)
++            notifyListeners(event, payload)
++        }
+         val ad = interstitialAd
+         val currentActivity = activity
+         if (ad == null) {
+@@ -201,19 +241,21 @@
+
+         interstitialShowCall = call
+         ad.setAdEventListener(object : InterstitialAdEventListener {
+-            override fun onAdShown() = notifyListeners("interstitialShown", adEvent(interstitialAdUnitId))
+-            override fun onAdClicked() = notifyListeners("interstitialClicked", adEvent(interstitialAdUnitId))
+-            override fun onAdImpression(impressionData: ImpressionData?) = notifyListeners("interstitialImpression", adEvent(interstitialAdUnitId))
++            override fun onAdShown() = notifyRequest("interstitialShown", adEvent(interstitialAdUnitId))
++            override fun onAdClicked() = notifyRequest("interstitialClicked", adEvent(interstitialAdUnitId))
++            override fun onAdImpression(impressionData: ImpressionData?) = notifyRequest("interstitialImpression", adEvent(interstitialAdUnitId).put("impressionData", impressionData?.rawData))
+             override fun onAdDismissed() {
+-                notifyListeners("interstitialDismissed", adEvent(interstitialAdUnitId))
+-                interstitialShowCall?.resolve(JSObject().put("presented", true))
++                if (interstitialShowCall !== call) return
++                notifyRequest("interstitialDismissed", adEvent(interstitialAdUnitId))
++                call.resolve(JSObject().put("presented", true))
+                 interstitialShowCall = null
+                 destroyInterstitialAd()
+             }
+
+             override fun onAdFailedToShow(adError: AdError) {
+-                notifyListeners("interstitialFailedToShow", errorEvent(interstitialAdUnitId, null, adError.description))
+-                interstitialShowCall?.reject(adError.description, "INTERSTITIAL_SHOW_FAILED")
++                if (interstitialShowCall !== call) return
++                notifyRequest("interstitialFailedToShow", errorEvent(interstitialAdUnitId, null, adError.description))
++                call.reject(adError.description, "INTERSTITIAL_SHOW_FAILED")
+                 interstitialShowCall = null
+                 destroyInterstitialAd()
+             }
+@@ -223,6 +265,11 @@
+
+     @PluginMethod
+     fun prepareRewarded(call: PluginCall) = runOnMainThread {
++        val requestId = call.getString("requestId") ?: ""
++        fun notifyRequest(event: String, payload: JSObject) {
++            payload.put("requestId", requestId)
++            notifyListeners(event, payload)
++        }
+         val adUnitId = requireAdUnitId(call) ?: return@runOnMainThread
+         if (!requireInitialized(call)) return@runOnMainThread
+         if (rewardedLoadCall != null) {
+@@ -241,16 +288,18 @@
+         val request = AdRequest.Builder(adUnitId).build()
+         rewardedAdLoader?.loadAd(request, object : RewardedAdLoadListener {
+             override fun onAdLoaded(rewarded: RewardedAd) {
++                if (rewardedLoadCall !== call) return
+                 rewardedAd = rewarded
+-                notifyListeners("rewardedLoaded", adEvent(rewardedAdUnitId))
+-                rewardedLoadCall?.resolve()
++                notifyRequest("rewardedLoaded", adEvent(rewardedAdUnitId))
++                call.resolve()
+                 rewardedLoadCall = null
+             }
+
+             override fun onAdFailedToLoad(error: AdRequestError) {
++                if (rewardedLoadCall !== call) return
+                 val event = errorEvent(rewardedAdUnitId, error.code, error.description)
+-                notifyListeners("rewardedFailedToLoad", event)
+-                rewardedLoadCall?.reject(error.description, "REWARDED_LOAD_FAILED")
++                notifyRequest("rewardedFailedToLoad", event)
++                call.reject(error.description, "REWARDED_LOAD_FAILED")
+                 rewardedLoadCall = null
+             }
+         })
+@@ -263,6 +312,11 @@
+
+     @PluginMethod
+     fun showRewarded(call: PluginCall) = runOnMainThread {
++        val requestId = call.getString("requestId") ?: ""
++        fun notifyRequest(event: String, payload: JSObject) {
++            payload.put("requestId", requestId)
++            notifyListeners(event, payload)
++        }
+         val ad = rewardedAd
+         val currentActivity = activity
+         if (ad == null) {
+@@ -281,12 +335,13 @@
+         rewardedEarned = false
+         rewardedShowCall = call
+         ad.setAdEventListener(object : RewardedAdEventListener {
+-            override fun onAdShown() = notifyListeners("rewardedShown", adEvent(rewardedAdUnitId))
+-            override fun onAdClicked() = notifyListeners("rewardedClicked", adEvent(rewardedAdUnitId))
+-            override fun onAdImpression(impressionData: ImpressionData?) = notifyListeners("rewardedImpression", adEvent(rewardedAdUnitId))
++            override fun onAdShown() = notifyRequest("rewardedShown", adEvent(rewardedAdUnitId))
++            override fun onAdClicked() = notifyRequest("rewardedClicked", adEvent(rewardedAdUnitId))
++            override fun onAdImpression(impressionData: ImpressionData?) = notifyRequest("rewardedImpression", adEvent(rewardedAdUnitId).put("impressionData", impressionData?.rawData))
+             override fun onRewarded(reward: Reward) {
++                if (rewardedShowCall !== call) return
+                 rewardedEarned = true
+-                notifyListeners("rewarded", JSObject().apply {
++                notifyRequest("rewarded", JSObject().apply {
+                     put("adUnitId", rewardedAdUnitId)
+                     put("amount", reward.amount)
+                     put("type", reward.type)
+@@ -294,8 +349,9 @@
+             }
+
+             override fun onAdDismissed() {
+-                notifyListeners("rewardedDismissed", adEvent(rewardedAdUnitId))
+-                rewardedShowCall?.resolve(JSObject().apply {
++                if (rewardedShowCall !== call) return
++                notifyRequest("rewardedDismissed", adEvent(rewardedAdUnitId))
++                call.resolve(JSObject().apply {
+                     put("presented", true)
+                     put("rewarded", rewardedEarned)
+                 })
+@@ -305,8 +361,9 @@
+             }
+
+             override fun onAdFailedToShow(adError: AdError) {
+-                notifyListeners("rewardedFailedToShow", errorEvent(rewardedAdUnitId, null, adError.description))
+-                rewardedShowCall?.reject(adError.description, "REWARDED_SHOW_FAILED")
++                if (rewardedShowCall !== call) return
++                notifyRequest("rewardedFailedToShow", errorEvent(rewardedAdUnitId, null, adError.description))
++                call.reject(adError.description, "REWARDED_SHOW_FAILED")
+                 rewardedShowCall = null
+                 rewardedEarned = false
+                 destroyRewardedAd()
 --- a/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift
 +++ b/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift
 @@ -8,6 +8,7 @@
@@ -129,7 +362,7 @@
                  self.reject(call, error: error, code: "REWARDED_LOAD_FAILED")
              }
          }
-@@ -265,6 +292,12 @@
+@@ -265,8 +292,24 @@
          return value
      }
  
@@ -141,8 +374,20 @@
 +
      @MainActor private func adEvent(_ adUnitID: String) -> [String: Any] {
          ["adUnitId": adUnitID]
++    }
++
++    @MainActor private func impressionEvent(_ adUnitID: String, _ impressionData: ImpressionData?) -> [String: Any] {
++        var payload = adEvent(adUnitID)
++        if let impressionData = impressionData {
++            payload["impressionData"] = impressionData.rawData
++        } else {
++            payload["impressionData"] = NSNull()
++        }
++        return payload
      }
-@@ -301,6 +334,7 @@
+ 
+     @MainActor private func errorEvent(_ adUnitID: String, _ error: Error) -> [String: Any] {
+@@ -301,6 +344,7 @@
  
  @MainActor extension YandexAdsPlugin: BannerAdViewDelegate {
      public func bannerAdViewDidLoad(_ bannerAdView: BannerAdView) {
@@ -150,7 +395,7 @@
          let size = bannerAdView.adContentSize()
          let result: [String: Any] = [
              "adUnitId": bannerAdUnitID,
-@@ -313,6 +347,7 @@
+@@ -313,44 +357,52 @@
      }
  
      public func bannerAdViewDidFailLoading(_ bannerAdView: BannerAdView, error: Error) {
@@ -158,7 +403,21 @@
          notifyListeners("bannerFailedToLoad", data: errorEvent(bannerAdUnitID, error))
          bannerLoadCall?.reject((error as NSError).localizedDescription, "BANNER_LOAD_FAILED", error)
          bannerLoadCall = nil
-@@ -330,27 +365,32 @@
+-        destroyBannerAd()
++        // Keep the view alive: the SDK owns banner refresh and recovery.
+     }
+ 
+     public func bannerAdViewDidClick(_ bannerAdView: BannerAdView) {
++        guard self.bannerAdView === bannerAdView else { return }
+         notifyListeners("bannerClicked", data: adEvent(bannerAdUnitID))
+     }
+ 
+     public func bannerAdView(_ bannerAdView: BannerAdView, didTrackImpression impressionData: ImpressionData?) {
+-        notifyListeners("bannerImpression", data: adEvent(bannerAdUnitID))
++        guard self.bannerAdView === bannerAdView else { return }
++        notifyListeners("bannerImpression", data: impressionEvent(bannerAdUnitID, impressionData))
+     }
+ }
  
  @MainActor extension YandexAdsPlugin: InterstitialAdDelegate {
      public func interstitialAdDidShow(_ interstitialAd: InterstitialAd) {
@@ -186,7 +445,7 @@
      public func interstitialAd(_ interstitialAd: InterstitialAd, didTrackImpression impressionData: ImpressionData?) {
 -        notifyListeners("interstitialImpression", data: adEvent(interstitialAdUnitID))
 +        guard self.interstitialAd === interstitialAd, let call = interstitialShowCall else { return }
-+        notifyRequest("interstitialImpression", call: call, data: adEvent(interstitialAdUnitID))
++        notifyRequest("interstitialImpression", call: call, data: impressionEvent(interstitialAdUnitID, impressionData))
      }
  
      public func interstitialAd(_ interstitialAd: InterstitialAd, didFailToShow error: Error) {
@@ -198,7 +457,7 @@
          interstitialShowCall = nil
          destroyInterstitialAd()
      }
-@@ -358,28 +398,33 @@
+@@ -358,28 +410,33 @@
  
  @MainActor extension YandexAdsPlugin: RewardedAdDelegate {
      public func rewardedAdDidShow(_ rewardedAd: RewardedAd) {
@@ -227,7 +486,7 @@
      public func rewardedAd(_ rewardedAd: RewardedAd, didTrackImpression impressionData: ImpressionData?) {
 -        notifyListeners("rewardedImpression", data: adEvent(rewardedAdUnitID))
 +        guard self.rewardedAd === rewardedAd, let call = rewardedShowCall else { return }
-+        notifyRequest("rewardedImpression", call: call, data: adEvent(rewardedAdUnitID))
++        notifyRequest("rewardedImpression", call: call, data: impressionEvent(rewardedAdUnitID, impressionData))
      }
  
      public func rewardedAd(_ rewardedAd: RewardedAd, didReward reward: Reward) {
@@ -238,7 +497,7 @@
              "adUnitId": rewardedAdUnitID,
              "amount": reward.amount,
              "type": reward.type
-@@ -387,8 +432,9 @@
+@@ -387,8 +444,9 @@
      }
  
      public func rewardedAd(_ rewardedAd: RewardedAd, didFailToShow error: Error) {
@@ -250,211 +509,3 @@
          rewardedShowCall = nil
          rewardedEarned = false
          destroyRewardedAd()
---- a/node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt
-+++ b/node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt
-@@ -74,6 +74,31 @@
-         }
-     }
- 
-+    // A WebView reload does not destroy this native plugin.
-+    @PluginMethod
-+    fun resetAds(call: PluginCall) = runOnMainThread {
-+        if (interstitialShowCall != null || rewardedShowCall != null) {
-+            call.reject("An ad is already showing", "AD_SHOW_IN_PROGRESS")
-+            return@runOnMainThread
-+        }
-+        val interstitialCall = interstitialLoadCall
-+        val rewardedCall = rewardedLoadCall
-+        interstitialLoadCall = null
-+        rewardedLoadCall = null
-+        interstitialAdLoader?.cancelLoading()
-+        rewardedAdLoader?.cancelLoading()
-+        interstitialAdLoader = null
-+        rewardedAdLoader = null
-+        interstitialCall?.reject("Privacy choices are changing", "ADS_RESET")
-+        rewardedCall?.reject("Privacy choices are changing", "ADS_RESET")
-+        bannerLoadCall?.reject("Privacy choices are changing", "ADS_RESET")
-+        bannerLoadCall = null
-+        destroyBannerAd()
-+        destroyInterstitialAd()
-+        destroyRewardedAd()
-+        call.resolve()
-+    }
-+
-     @PluginMethod
-     fun setUserConsent(call: PluginCall) = setBoolean(call, YandexAds::setUserConsent)
- 
-@@ -121,7 +146,7 @@
- 
-                 override fun onAdClicked() = notifyListeners("bannerClicked", adEvent(bannerAdUnitId))
-                 override fun onImpression(impressionData: ImpressionData?) =
--                    notifyListeners("bannerImpression", adEvent(bannerAdUnitId))
-+                    notifyListeners("bannerImpression", adEvent(bannerAdUnitId).put("impressionData", impressionData?.rawData))
-             })
-         }
-         bannerAdView = banner
-@@ -147,6 +172,11 @@
- 
-     @PluginMethod
-     fun prepareInterstitial(call: PluginCall) = runOnMainThread {
-+        val requestId = call.getString("requestId") ?: ""
-+        fun notifyRequest(event: String, payload: JSObject) {
-+            payload.put("requestId", requestId)
-+            notifyListeners(event, payload)
-+        }
-         val adUnitId = requireAdUnitId(call) ?: return@runOnMainThread
-         if (!requireInitialized(call)) return@runOnMainThread
-         if (interstitialLoadCall != null) {
-@@ -165,16 +195,18 @@
-         val request = AdRequest.Builder(adUnitId).build()
-         interstitialAdLoader?.loadAd(request, object : InterstitialAdLoadListener {
-             override fun onAdLoaded(interstitialAd: InterstitialAd) {
-+                if (interstitialLoadCall !== call) return
-                 this@YandexAdsPlugin.interstitialAd = interstitialAd
--                notifyListeners("interstitialLoaded", adEvent(interstitialAdUnitId))
--                interstitialLoadCall?.resolve()
-+                notifyRequest("interstitialLoaded", adEvent(interstitialAdUnitId))
-+                call.resolve()
-                 interstitialLoadCall = null
-             }
- 
-             override fun onAdFailedToLoad(error: AdRequestError) {
-+                if (interstitialLoadCall !== call) return
-                 val event = errorEvent(interstitialAdUnitId, error.code, error.description)
--                notifyListeners("interstitialFailedToLoad", event)
--                interstitialLoadCall?.reject(error.description, "INTERSTITIAL_LOAD_FAILED")
-+                notifyRequest("interstitialFailedToLoad", event)
-+                call.reject(error.description, "INTERSTITIAL_LOAD_FAILED")
-                 interstitialLoadCall = null
-             }
-         })
-@@ -187,6 +219,11 @@
- 
-     @PluginMethod
-     fun showInterstitial(call: PluginCall) = runOnMainThread {
-+        val requestId = call.getString("requestId") ?: ""
-+        fun notifyRequest(event: String, payload: JSObject) {
-+            payload.put("requestId", requestId)
-+            notifyListeners(event, payload)
-+        }
-         val ad = interstitialAd
-         val currentActivity = activity
-         if (ad == null) {
-@@ -204,19 +241,21 @@
- 
-         interstitialShowCall = call
-         ad.setAdEventListener(object : InterstitialAdEventListener {
--            override fun onAdShown() = notifyListeners("interstitialShown", adEvent(interstitialAdUnitId))
--            override fun onAdClicked() = notifyListeners("interstitialClicked", adEvent(interstitialAdUnitId))
--            override fun onAdImpression(impressionData: ImpressionData?) = notifyListeners("interstitialImpression", adEvent(interstitialAdUnitId))
-+            override fun onAdShown() = notifyRequest("interstitialShown", adEvent(interstitialAdUnitId))
-+            override fun onAdClicked() = notifyRequest("interstitialClicked", adEvent(interstitialAdUnitId))
-+            override fun onAdImpression(impressionData: ImpressionData?) = notifyRequest("interstitialImpression", adEvent(interstitialAdUnitId).put("impressionData", impressionData?.rawData))
-             override fun onAdDismissed() {
--                notifyListeners("interstitialDismissed", adEvent(interstitialAdUnitId))
--                interstitialShowCall?.resolve(JSObject().put("presented", true))
-+                if (interstitialShowCall !== call) return
-+                notifyRequest("interstitialDismissed", adEvent(interstitialAdUnitId))
-+                call.resolve(JSObject().put("presented", true))
-                 interstitialShowCall = null
-                 destroyInterstitialAd()
-             }
- 
-             override fun onAdFailedToShow(adError: AdError) {
--                notifyListeners("interstitialFailedToShow", errorEvent(interstitialAdUnitId, null, adError.description))
--                interstitialShowCall?.reject(adError.description, "INTERSTITIAL_SHOW_FAILED")
-+                if (interstitialShowCall !== call) return
-+                notifyRequest("interstitialFailedToShow", errorEvent(interstitialAdUnitId, null, adError.description))
-+                call.reject(adError.description, "INTERSTITIAL_SHOW_FAILED")
-                 interstitialShowCall = null
-                 destroyInterstitialAd()
-             }
-@@ -226,6 +265,11 @@
- 
-     @PluginMethod
-     fun prepareRewarded(call: PluginCall) = runOnMainThread {
-+        val requestId = call.getString("requestId") ?: ""
-+        fun notifyRequest(event: String, payload: JSObject) {
-+            payload.put("requestId", requestId)
-+            notifyListeners(event, payload)
-+        }
-         val adUnitId = requireAdUnitId(call) ?: return@runOnMainThread
-         if (!requireInitialized(call)) return@runOnMainThread
-         if (rewardedLoadCall != null) {
-@@ -244,16 +288,18 @@
-         val request = AdRequest.Builder(adUnitId).build()
-         rewardedAdLoader?.loadAd(request, object : RewardedAdLoadListener {
-             override fun onAdLoaded(rewarded: RewardedAd) {
-+                if (rewardedLoadCall !== call) return
-                 rewardedAd = rewarded
--                notifyListeners("rewardedLoaded", adEvent(rewardedAdUnitId))
--                rewardedLoadCall?.resolve()
-+                notifyRequest("rewardedLoaded", adEvent(rewardedAdUnitId))
-+                call.resolve()
-                 rewardedLoadCall = null
-             }
- 
-             override fun onAdFailedToLoad(error: AdRequestError) {
-+                if (rewardedLoadCall !== call) return
-                 val event = errorEvent(rewardedAdUnitId, error.code, error.description)
--                notifyListeners("rewardedFailedToLoad", event)
--                rewardedLoadCall?.reject(error.description, "REWARDED_LOAD_FAILED")
-+                notifyRequest("rewardedFailedToLoad", event)
-+                call.reject(error.description, "REWARDED_LOAD_FAILED")
-                 rewardedLoadCall = null
-             }
-         })
-@@ -266,6 +312,11 @@
- 
-     @PluginMethod
-     fun showRewarded(call: PluginCall) = runOnMainThread {
-+        val requestId = call.getString("requestId") ?: ""
-+        fun notifyRequest(event: String, payload: JSObject) {
-+            payload.put("requestId", requestId)
-+            notifyListeners(event, payload)
-+        }
-         val ad = rewardedAd
-         val currentActivity = activity
-         if (ad == null) {
-@@ -284,12 +335,13 @@
-         rewardedEarned = false
-         rewardedShowCall = call
-         ad.setAdEventListener(object : RewardedAdEventListener {
--            override fun onAdShown() = notifyListeners("rewardedShown", adEvent(rewardedAdUnitId))
--            override fun onAdClicked() = notifyListeners("rewardedClicked", adEvent(rewardedAdUnitId))
--            override fun onAdImpression(impressionData: ImpressionData?) = notifyListeners("rewardedImpression", adEvent(rewardedAdUnitId))
-+            override fun onAdShown() = notifyRequest("rewardedShown", adEvent(rewardedAdUnitId))
-+            override fun onAdClicked() = notifyRequest("rewardedClicked", adEvent(rewardedAdUnitId))
-+            override fun onAdImpression(impressionData: ImpressionData?) = notifyRequest("rewardedImpression", adEvent(rewardedAdUnitId).put("impressionData", impressionData?.rawData))
-             override fun onRewarded(reward: Reward) {
-+                if (rewardedShowCall !== call) return
-                 rewardedEarned = true
--                notifyListeners("rewarded", JSObject().apply {
-+                notifyRequest("rewarded", JSObject().apply {
-                     put("adUnitId", rewardedAdUnitId)
-                     put("amount", reward.amount)
-                     put("type", reward.type)
-@@ -297,8 +349,9 @@
-             }
- 
-             override fun onAdDismissed() {
--                notifyListeners("rewardedDismissed", adEvent(rewardedAdUnitId))
--                rewardedShowCall?.resolve(JSObject().apply {
-+                if (rewardedShowCall !== call) return
-+                notifyRequest("rewardedDismissed", adEvent(rewardedAdUnitId))
-+                call.resolve(JSObject().apply {
-                     put("presented", true)
-                     put("rewarded", rewardedEarned)
-                 })
-@@ -308,8 +361,9 @@
-             }
- 
-             override fun onAdFailedToShow(adError: AdError) {
--                notifyListeners("rewardedFailedToShow", errorEvent(rewardedAdUnitId, null, adError.description))
--                rewardedShowCall?.reject(adError.description, "REWARDED_SHOW_FAILED")
-+                if (rewardedShowCall !== call) return
-+                notifyRequest("rewardedFailedToShow", errorEvent(rewardedAdUnitId, null, adError.description))
-+                call.reject(adError.description, "REWARDED_SHOW_FAILED")
-                 rewardedShowCall = null
-                 rewardedEarned = false
-                 destroyRewardedAd()

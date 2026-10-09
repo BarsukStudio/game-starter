@@ -20,7 +20,7 @@
 //
 // It does not become `1.0.0` before a second consumer has been through it —
 // step 6 may still find a breaking problem.
-export const CONTRACT_VERSION = '0.3.0';
+export const CONTRACT_VERSION = '0.6.0';
 
 // Every method `createPlatformController()` hands the game, and nothing else.
 // Sorted so a diff over this array is a diff over the contract rather than over
@@ -28,6 +28,7 @@ export const CONTRACT_VERSION = '0.3.0';
 // `CAPABILITY_GROUPS` below, over the same names.
 export const PLATFORM_CONTRACT = Object.freeze([
   'bindNativeLifecycle',
+  'describePurchaseTransaction',
   'exitNativeApp',
   'finishPurchaseTransaction',
   'getPortalLanguage',
@@ -75,8 +76,8 @@ export const CAPABILITY_GROUPS = Object.freeze({
     'setAdsRemovedOwned',
   ]),
   // Unavailable platforms return { available: false, busy: false } and false.
-  // A successful form requires the caller to reload after preserving its state;
-  // until reload, the platform must block ads prepared under the old choices.
+  // A successful form retires ads prepared under old choices. The adapter may
+  // rebuild inventory, or require the caller to preserve state and reload.
   privacy: Object.freeze([
     'getPrivacyOptionsState',
     'showPrivacyOptions',
@@ -86,6 +87,12 @@ export const CAPABILITY_GROUPS = Object.freeze({
     'supportsRestorePurchases',
     'initializePurchaseStore',
     'verifyPurchaseTransaction',
+    // describePurchaseTransaction(handle) is synchronous, has no store side
+    // effects, and returns only { productId: string, transactionId: string,
+    // pending: boolean }. IDs are stable delivery identity; absent identity
+    // is an empty string. An absent handle returns empty IDs and pending=false.
+    // Description does not verify, grant, finish, or authorize delivery.
+    'describePurchaseTransaction',
     'getPurchaseProducts',
     'getPurchasePrices',
     'orderPurchase',
@@ -115,6 +122,15 @@ export const CAPABILITY_GROUPS = Object.freeze({
 // bag the game handed to the initializer. A fullscreen ad covers the app for
 // tens of seconds; the promise is not where its result lives. So the terminal
 // outcomes are contract, and they are named here.
+//
+// Show return values describe dispatch, never a reward or a displayed impression.
+// `false` means this invocation was refused or failed. A failure callback may
+// already have run before the Promise settles; some refusals (e.g. a duplicate
+// while busy) emit none. Callers must not wait for a callback after `false`.
+// Finalize their own request idempotently by its captured id, so callback then
+// false cannot finalize a newer request. A refused duplicate must not terminate
+// the accepted in-flight attempt. `true` is not proof of presentation or reward:
+// those are confirmed only by the callbacks (including a bound reward handler).
 //
 // Keyed by the initializer that receives them, because the two bags are not
 // interchangeable and a flat list would lose which method owns which name.

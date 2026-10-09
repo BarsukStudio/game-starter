@@ -1,3 +1,4 @@
+import { createRequestId } from '../request-id.js';
 import { FirebaseAnalytics } from '@capacitor-firebase/analytics';
 import { isNative, nativePlatform } from '../env.js';
 
@@ -69,7 +70,7 @@ export function revenueParameters(provider, format, payload, testAds) {
 }
 
 export async function bindAdRevenueEvents(plugin, provider, events, testAds) {
-  if (!isNative || nativePlatform !== 'android') return;
+  if (!isNative || !['android', 'ios'].includes(nativePlatform)) return;
   let bound = registrations.get(plugin);
   if (!bound) registrations.set(plugin, bound = new Map());
   await Promise.all(Object.entries(events).map(async ([format, event]) => {
@@ -80,7 +81,7 @@ export async function bindAdRevenueEvents(plugin, provider, events, testAds) {
         name: 'bs_ad_revenue',
         params: {
           ...revenueParameters(provider, format, payload, testAds),
-          callback_id: globalThis.crypto.randomUUID(),
+          callback_id: createRequestId(),
         },
       })).catch(() => console.warn('Ad revenue telemetry delivery failed'));
     })).catch(() => {

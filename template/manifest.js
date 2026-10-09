@@ -47,7 +47,7 @@ export const TEMPLATE_TREES = Object.freeze({
       '@capacitor/app',
       '@capacitor/core',
       '@capacitor/splash-screen',
-      // The opt-in Android ad revenue collector uses Analytics.
+      // Native revenue observations use Analytics in both advertising variants.
       '@capacitor-firebase/analytics',
       // Only the opt-in diagnostics module imports these.
       '@capacitor-firebase/crashlytics',

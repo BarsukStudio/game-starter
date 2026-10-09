@@ -51,6 +51,36 @@ async function storeStarted({ createController, controls, skip }, { hold = false
 
 export const cases = [
   {
+    name: 'purchase-description-is-plain-data-without-a-store',
+    environment: 'generic-web',
+    run({ createController }) {
+      assert.deepEqual(createController().describePurchaseTransaction(undefined), {
+        productId: '', transactionId: '', pending: false,
+      });
+    },
+  },
+  {
+    name: 'an-approved-transaction-description-identifies-its-product',
+    environment: 'native-store',
+    async run(harness) {
+      const { controller, store, log } = await storeStarted(harness);
+      const productId = Object.values(controller.getPurchaseProducts())[0];
+      store.approve(productId);
+      const approved = log.filter(({ name }) => name === 'onTransactionApproved');
+      assert.equal(approved.length, 1);
+      const handle = approved[0].args[0];
+      const description = controller.describePurchaseTransaction(handle);
+      assert.equal(findNonPlainValue(description, 'description'), null);
+      assert.deepEqual(Object.keys(description).sort(), ['pending', 'productId', 'transactionId']);
+      assert.equal(description.productId, productId);
+      assert.ok(typeof description.transactionId === 'string' && description.transactionId.trim());
+      assert.equal(typeof description.pending, 'boolean');
+      assert.deepEqual(controller.describePurchaseTransaction(handle), description, 'identity stays stable');
+      assert.deepEqual(store.verifiedFor(), [], 'description never verifies');
+      assert.deepEqual(store.finishedFor(), [], 'description never finishes');
+    },
+  },
+  {
     name: 'purchase-capabilities-answer-before-the-store-is-up',
     environment: 'native-store',
     run({ createController }) {

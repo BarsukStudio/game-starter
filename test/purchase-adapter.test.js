@@ -371,3 +371,32 @@ test('a build only claims it can sell when its catalogue says what', needsHooks,
   const { adapter } = await loadAdapter(EMPTY_STORE_KEY);
   assert.equal(adapter.hasProducts(), false, 'a game with purchases switched off sells nothing');
 });
+
+
+test('transaction descriptions preserve identity and pending state without store effects', needsHooks, async () => {
+  for (const storeKey of STORE_KEYS) {
+    const { adapter, probe } = await loadAdapter(storeKey);
+    const productId = entriesOf(storeKey)[0][1].id;
+    const transaction = {
+      products: [{ id: ` ${productId} ` }], transactionId: ' delivery-1 ', isPending: true,
+      verify() { throw new Error('description must not verify'); },
+      finish() { throw new Error('description must not finish'); },
+    };
+    const before = structuredClone(probe);
+    const description = adapter.describeTransaction(transaction);
+    assert.deepEqual(description, { productId, transactionId: 'delivery-1', pending: true });
+    assert.deepEqual(probe, before, 'reading identity does not initialize or call the store');
+    assert.deepEqual(adapter.describeTransaction(transaction), description);
+    description.productId = 'changed';
+    assert.equal(adapter.describeTransaction(transaction).productId, productId, 'returns a detached record');
+    transaction.isPending = false;
+    assert.equal(adapter.describeTransaction(transaction).pending, false);
+  }
+});
+
+test('missing transaction identity stays missing without invented delivery IDs', needsHooks, async () => {
+  const { adapter } = await loadAdapter(EMPTY_STORE_KEY);
+  for (const transaction of [undefined, null, {}, { products: [], transactionId: ' ', isPending: 'true' }]) {
+    assert.deepEqual(adapter.describeTransaction(transaction), { productId: '', transactionId: '', pending: false });
+  }
+});

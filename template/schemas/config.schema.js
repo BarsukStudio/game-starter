@@ -108,9 +108,11 @@ export function validateConsumerConfig(config) {
 
   if (checkRecord(problems, 'config.platform', config.platform)) {
     checkString(problems, 'config.platform.runtimeTargetGlobal', config.platform.runtimeTargetGlobal);
-    checkString(problems, 'config.platform.debugAdsProviderKey', config.platform.debugAdsProviderKey);
+    if (config.ads?.nativeStack !== 'cas') checkString(problems, 'config.platform.debugAdsProviderKey', config.platform.debugAdsProviderKey);
     const legacy = config.platform.legacyAdsProviderKeys;
-    if (!Array.isArray(legacy)) {
+    if (config.ads?.nativeStack === 'cas' && legacy === undefined) {
+      // CAS-only consumers have no provider override storage.
+    } else if (!Array.isArray(legacy)) {
       fail(problems, 'config.platform.legacyAdsProviderKeys', 'an array', legacy);
     } else {
       legacy.forEach((key, index) => {
@@ -129,30 +131,45 @@ export function validateConsumerConfig(config) {
 
   if (checkRecord(problems, 'config.ads', config.ads)) {
     checkBoolean(problems, 'config.ads.nativeTestMode', config.ads.nativeTestMode);
-    if (checkRecord(problems, 'config.ads.admob', config.ads.admob)) {
-      const admob = config.ads.admob;
-      if (!Array.isArray(admob.testingDevices)) {
-        fail(problems, 'config.ads.admob.testingDevices', 'an array', admob.testingDevices);
-      } else {
-        // Handed to the AdMob SDK as device ids. A number here reaches the SDK
-        // as one and registers nothing, which looks exactly like a device that
-        // was never added to the list.
-        admob.testingDevices.forEach((id, index) => {
-          checkString(problems, `config.ads.admob.testingDevices[${index}]`, id);
-        });
+    if (config.ads.nativeStack === 'cas') {
+      if ('admob' in config.ads || 'yandex' in config.ads) problems.push('config.ads: CAS cannot include legacy native provider config');
+      if (checkRecord(problems, 'config.ads.cas', config.ads.cas)) {
+        if (!['children', 'notChildren', 'undefined'].includes(config.ads.cas.audience)) {
+          problems.push('config.ads.cas.audience: expected an explicit CAS audience');
+        }
+        for (const key of STORE_KEYS) {
+          if (checkRecord(problems, `config.ads.cas.${key}`, config.ads.cas[key])) {
+            checkString(problems, `config.ads.cas.${key}.casId`, config.ads.cas[key].casId);
+          }
+        }
       }
-      checkBoolean(problems, 'config.ads.admob.useSampleAds', admob.useSampleAds);
-      for (const storeKey of STORE_KEYS) {
-        if (!checkRecord(problems, `config.ads.admob.${storeKey}`, admob[storeKey])) continue;
-        checkString(problems, `config.ads.admob.${storeKey}.appId`, admob[storeKey].appId);
-        checkAdUnits(problems, `config.ads.admob.${storeKey}`, admob[storeKey]);
+    } else {
+      if (config.ads.nativeStack !== undefined && config.ads.nativeStack !== 'admob') problems.push('config.ads.nativeStack: unsupported native stack');
+      if (checkRecord(problems, 'config.ads.admob', config.ads.admob)) {
+        const admob = config.ads.admob;
+        if (!Array.isArray(admob.testingDevices)) {
+          fail(problems, 'config.ads.admob.testingDevices', 'an array', admob.testingDevices);
+        } else {
+          // Handed to the AdMob SDK as device ids. A number here reaches the SDK
+          // as one and registers nothing, which looks exactly like a device that
+          // was never added to the list.
+          admob.testingDevices.forEach((id, index) => {
+            checkString(problems, `config.ads.admob.testingDevices[${index}]`, id);
+          });
+        }
+        checkBoolean(problems, 'config.ads.admob.useSampleAds', admob.useSampleAds);
+        for (const storeKey of STORE_KEYS) {
+          if (!checkRecord(problems, `config.ads.admob.${storeKey}`, admob[storeKey])) continue;
+          checkString(problems, `config.ads.admob.${storeKey}.appId`, admob[storeKey].appId);
+          checkAdUnits(problems, `config.ads.admob.${storeKey}`, admob[storeKey]);
+        }
       }
-    }
-    if (checkRecord(problems, 'config.ads.yandex', config.ads.yandex)) {
-      // `test` alongside the two stores: the Yandex SDK has demo units of its
-      // own, and native test mode routes to them rather than to real ids.
-      for (const key of ['test', ...STORE_KEYS]) {
-        checkAdUnits(problems, `config.ads.yandex.${key}`, config.ads.yandex[key]);
+      if (checkRecord(problems, 'config.ads.yandex', config.ads.yandex)) {
+        // `test` alongside the two stores: the Yandex SDK has demo units of its
+        // own, and native test mode routes to them rather than to real ids.
+        for (const key of ['test', ...STORE_KEYS]) {
+          checkAdUnits(problems, `config.ads.yandex.${key}`, config.ads.yandex[key]);
+        }
       }
     }
   }

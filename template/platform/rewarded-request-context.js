@@ -31,7 +31,7 @@ export function createRewardedRequestCoordinator(options = {}) {
 
   function notify(handler, request, outcome) {
     try {
-      handler(request, outcome);
+      return handler(request, outcome);
     } catch (error) {
       // A throwing game handler must not wedge the coordinator: the state
       // transition is already committed by the time we get here, so the next
@@ -75,7 +75,10 @@ export function createRewardedRequestCoordinator(options = {}) {
       return () => {
         if (!request || request.saveEpoch !== saveEpoch || request.rewardGranted) return false;
         request.rewardGranted = true;
-        notify(onRewardEarned, request, 'rewarded');
+        if (notify(onRewardEarned, request, 'rewarded') === false) {
+          request.rewardGranted = false;
+          return false;
+        }
         return true;
       };
     },
@@ -100,7 +103,10 @@ export function createRewardedRequestCoordinator(options = {}) {
       const request = active;
       if (request.rewardGranted) return false;
       request.rewardGranted = true;
-      notify(onRewardEarned, request, 'rewarded');
+      if (notify(onRewardEarned, request, 'rewarded') === false) {
+        request.rewardGranted = false;
+        return false;
+      }
       return true;
     },
 

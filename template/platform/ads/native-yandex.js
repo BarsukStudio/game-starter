@@ -1,3 +1,5 @@
+import { createRequestId } from '../request-id.js';
+import { createBannerTelemetry } from './banner-telemetry.js';
 import { createNativeAdEvents } from './native-ad-events.js';
 // Yandex native ads, through the Capacitor plugin.
 //
@@ -13,11 +15,13 @@ import { createNativeAdEvents } from './native-ad-events.js';
 import { debugLog } from '../../debug.js';
 import { APP_CONFIG } from '../config.js';
 import { getNativeKey } from '../env.js';
-import { prepareNativeConsent, requestIosTrackingAuthorization } from './native-admob.js';
+import { requestIosTrackingAuthorization, waitForConsentRetry } from './native-admob.js';
+import { bindAdRevenueEvents } from './ad-revenue.js';
 
 let deps = null;
 let plugin = null;
 let presentation = null;
+let bannerTelemetry = null;
 
 export function hasPresentation() {
   return presentation !== null;
@@ -53,123 +57,168 @@ async function ensurePlugin() {
 // a load, because a preload dispatched at a provider whose SDK never arrived
 // would leave the lifecycle waiting on a watchdog instead of not starting.
 export function isPluginLoaded() {
-  return Boolean(plugin);
+  return listenersBound;
 }
 
 async function showBanner(YandexAds) {
   if (deps.isAdsRemoved()) return false;
   const config = getConfig();
   try {
+    bannerTelemetry?.request();
     await YandexAds.showBanner({ adUnitId: config.banner });
     // Ownership can be restored while the native banner is loading. Remove it
     // immediately instead of leaving a paid owner with a visible banner.
     if (deps.isAdsRemoved()) {
+      bannerTelemetry?.stop();
       await YandexAds.removeBanner();
       return false;
     }
     return true;
   } catch (error) {
+    bannerTelemetry?.failed(error, 'bridge_rejection');
     console.warn('YandexAds banner show failed', error);
     return false;
   }
 }
 
-// Returns whether the SDK came up. The bridge turns the provider off on false,
-// and decides from its own routing whether AdMob gets a turn afterwards.
-export async function init(injected) {
+// Recover failed setup on lifecycle/network signals; retain the selected provider.
+let initializationPromise = null;
+let sdkInitialized = false;
+let listenersBound = false;
+let retryable = false;
+let retryAfter = 0;
+export function canRetryInitialization() { return retryable && !initializationPromise; }
+export function init(injected) {
+  if (!initializationPromise) {
+    const delay = retryable ? Math.max(0, retryAfter - performance.now()) : 0;
+    retryable = false;
+    // Retain one recovery signal during cooldown; foreground time owns the wait.
+    initializationPromise = (delay > 0 ? waitForConsentRetry(delay) : Promise.resolve())
+      .then(() => initialize(injected)).then(ready => {
+      if (!ready) { retryable = true; retryAfter = performance.now() + 30000; initializationPromise = null; }
+      return ready;
+    });
+  }
+  return initializationPromise;
+}
+async function initialize(injected) {
+  bannerTelemetry?.stop();
+  bannerTelemetry = createBannerTelemetry('yandex', APP_CONFIG.ads.nativeTestMode);
   deps = {
     ...injected,
-    interstitial: createNativeAdEvents(injected.interstitial, () => globalThis.crypto.randomUUID()),
-    rewarded: createNativeAdEvents(injected.rewarded, () => globalThis.crypto.randomUUID()),
+    interstitial: createNativeAdEvents(injected.interstitial, () => createRequestId()),
+    rewarded: createNativeAdEvents(injected.rewarded, () => createRequestId()),
   };
 
-  const consent = await prepareNativeConsent();
-  if (!consent.canRequestAds) return false;
-  // UMP precedes ATT and SDK initialization for either native provider.
+  // Yandex starts independently of AdMob UMP under this variant's consent policy.
   await requestIosTrackingAuthorization();
 
   let YandexAds;
   try {
     YandexAds = (await ensurePlugin())?.YandexAds;
     if (!YandexAds) throw new Error('YandexAds Capacitor plugin is unavailable');
-    await YandexAds.initialize({
-      userConsent: consent.yandexConsent,
-      locationTracking: false,
-      enableLogging: APP_CONFIG.ads.nativeTestMode,
-    });
-    await YandexAds.setUserConsent({ value: consent.yandexConsent });
+    if (!sdkInitialized) {
+      await YandexAds.resetAds();
+      await YandexAds.initialize({
+        userConsent: true,
+        locationTracking: false,
+        enableLogging: APP_CONFIG.ads.nativeTestMode,
+      });
+      sdkInitialized = true;
+    }
+    await YandexAds.setUserConsent({ value: true });
 
-    await Promise.all([
-      YandexAds.addListener(
-        'rewardedLoaded',
-        (payload) => deps.rewarded.loadSucceeded(payload),
-      ),
-      YandexAds.addListener(
-        'rewardedFailedToLoad',
-        (error) => deps.rewarded.loadFailed(error),
-      ),
-      YandexAds.addListener(
-        'rewardedShown',
-        (payload) => deps.rewarded.showStarted(payload),
-      ),
-      YandexAds.addListener(
-        'rewardedFailedToShow',
-        (error) => {
-          settlePresentation('rewarded', error?.requestId);
-          deps.rewarded.showFailed(error);
-        },
-      ),
-      YandexAds.addListener(
-        'rewardedDismissed',
-        (payload) => {
-          // Legacy callers need the result's reward bit before closing. Keep
-          // both formats reserved so another show cannot precede that close.
-          if (presentation?.format === 'rewarded'
-            && presentation.scope.requestId === payload?.requestId
-            && presentation.scope.isCurrent()
-            && !presentation.scope.rewardConfirmationBound) return;
-          // Bound rewards survive dismissal. Close the game before another
-          // format can start; only confirmation may arrive later for this view.
-          settlePresentation('rewarded', payload?.requestId);
-          deps.rewarded.showClosed(payload);
-        },
-      ),
-      YandexAds.addListener(
-        'rewarded',
-        (payload) => deps.rewarded.rewardEarned(payload),
-      ),
-      YandexAds.addListener(
-        'interstitialLoaded',
-        (payload) => deps.interstitial.loadSucceeded(payload),
-      ),
-      YandexAds.addListener(
-        'interstitialFailedToLoad',
-        (error) => deps.interstitial.loadFailed(error),
-      ),
-      YandexAds.addListener(
-        'interstitialShown',
-        (payload) => deps.interstitial.showStarted(payload),
-      ),
-      YandexAds.addListener(
-        'interstitialFailedToShow',
-        (error) => {
-          settlePresentation('interstitial', error?.requestId);
-          deps.interstitial.showFailed(error);
-        },
-      ),
-      YandexAds.addListener(
-        'interstitialDismissed',
-        (payload) => {
-          settlePresentation('interstitial', payload?.requestId);
-          deps.interstitial.showClosed(payload);
-        },
-      ),
-      YandexAds.addListener('bannerLoaded', () => debugLog('YandexAds banner loaded')),
-      YandexAds.addListener(
-        'bannerFailedToLoad',
-        (error) => console.warn('YandexAds banner load failed', error),
-      ),
-    ]);
+    await bindAdRevenueEvents(YandexAds, 'yandex', {
+      banner: 'bannerImpression',
+      interstitial: 'interstitialImpression',
+      rewarded: 'rewardedImpression',
+    }, APP_CONFIG.ads.nativeTestMode);
+
+    if (!listenersBound) {
+      const results = await Promise.allSettled([
+        YandexAds.addListener(
+          'rewardedLoaded',
+          (payload) => deps.rewarded.loadSucceeded(payload),
+        ),
+        YandexAds.addListener(
+          'rewardedFailedToLoad',
+          (error) => deps.rewarded.loadFailed(error),
+        ),
+        YandexAds.addListener(
+          'rewardedShown',
+          (payload) => deps.rewarded.showStarted(payload),
+        ),
+        YandexAds.addListener(
+          'rewardedFailedToShow',
+          (error) => {
+            settlePresentation('rewarded', error?.requestId);
+            deps.rewarded.showFailed(error);
+          },
+        ),
+        YandexAds.addListener(
+          'rewardedDismissed',
+          (payload) => {
+            // Legacy callers need the result's reward bit before closing. Keep
+            // both formats reserved so another show cannot precede that close.
+            if (presentation?.format === 'rewarded'
+              && presentation.scope.requestId === payload?.requestId
+              && presentation.scope.isCurrent()
+              && !presentation.scope.rewardConfirmationBound) return;
+            // Bound rewards survive dismissal. Close the game before another
+            // format can start; only confirmation may arrive later for this view.
+            settlePresentation('rewarded', payload?.requestId);
+            deps.rewarded.showClosed(payload);
+          },
+        ),
+        YandexAds.addListener(
+          'rewarded',
+          (payload) => deps.rewarded.rewardEarned(payload),
+        ),
+        YandexAds.addListener(
+          'interstitialLoaded',
+          (payload) => deps.interstitial.loadSucceeded(payload),
+        ),
+        YandexAds.addListener(
+          'interstitialFailedToLoad',
+          (error) => deps.interstitial.loadFailed(error),
+        ),
+        YandexAds.addListener(
+          'interstitialShown',
+          (payload) => deps.interstitial.showStarted(payload),
+        ),
+        YandexAds.addListener(
+          'interstitialFailedToShow',
+          (error) => {
+            settlePresentation('interstitial', error?.requestId);
+            deps.interstitial.showFailed(error);
+          },
+        ),
+        YandexAds.addListener(
+          'interstitialDismissed',
+          (payload) => {
+            settlePresentation('interstitial', payload?.requestId);
+            deps.interstitial.showClosed(payload);
+          },
+        ),
+        YandexAds.addListener('bannerLoaded', () => {
+          bannerTelemetry?.loaded();
+          debugLog('YandexAds banner loaded');
+        }),
+        YandexAds.addListener(
+          'bannerFailedToLoad',
+          (error) => {
+            bannerTelemetry?.failed(error, 'sdk_callback');
+            console.warn('YandexAds banner load failed', error);
+          },
+        ),
+      ]);
+      const failure = results.find(result => result.status === 'rejected');
+      if (failure) {
+        await Promise.allSettled(results.filter(result => result.status === 'fulfilled').map(result => result.value?.remove?.()));
+        throw failure.reason;
+      }
+      listenersBound = true;
+    }
     debugLog(`YandexAds OK (${APP_CONFIG.ads.nativeTestMode ? 'test' : 'production'} ads)`);
   } catch (error) {
     console.warn('YandexAds initialize failed', error);
@@ -274,6 +323,7 @@ export function preloadRewarded() {
 // Hiding a banner on the active provider: the plugin is already loaded, and an
 // older build without `removeBanner` must not throw on an owner's first launch.
 export function hideBanner() {
+  bannerTelemetry?.stop();
   if (typeof plugin?.YandexAds?.removeBanner !== 'function') return;
   void Promise.resolve()
     .then(() => plugin.YandexAds.removeBanner())
@@ -286,6 +336,7 @@ export function hideBanner() {
 // That is why this one may still load the plugin, and why it swallows
 // everything — a cleanup that cannot run must not block the reload.
 export async function removeBannerIfAvailable() {
+  bannerTelemetry?.stop();
   // The handle is unwrapped by property access after the await, never returned
   // from a `.then` callback. A callback that returned the proxy would hand it
   // to the promise resolution procedure, which reads `.then` on whatever it is
@@ -304,9 +355,10 @@ export async function removeBannerIfAvailable() {
   await YandexAds.removeBanner();
 }
 
-// Native loads and cached ads survive a WebView reload. Missing reset support
-// is an error: privacy choices must not change over an old native session.
+// Invalidate pending requests and cached ads before the UMP form can change consent.
+// Missing reset support is an error: do not proceed with a stale native session.
 export async function resetAdsForPrivacy() {
+  bannerTelemetry?.stop();
   const handle = await ensurePlugin();
   await handle.YandexAds.resetAds();
 }

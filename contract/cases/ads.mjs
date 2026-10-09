@@ -1,6 +1,6 @@
 // Fullscreen ads, judged by what reaches the game.
 //
-// Not by what `showInterstitialAd()` resolves to. A fullscreen ad covers the
+// Presentation and rewards are judged by callbacks, not a successful return. A fullscreen ad covers the
 // app for tens of seconds and its outcome arrives afterwards, on the callback
 // bag the game handed to the initializer; an SDK that never answers leaves the
 // show call's promise pending for as long as it likes, and the watchdog that
@@ -30,7 +30,8 @@ function startShow(promise) {
 
 // Let whatever the show call queued reach the SDK. A platform that dispatches
 // through an await needs one turn; one that calls straight through needs none,
-// and an extra turn costs it nothing.
+// and an extra turn costs it nothing. The same boundary applies after driven
+// SDK outcomes: native adapters may deliver terminal callbacks through Promises.
 const reachSdk = () => new Promise((resolve) => setImmediate(resolve));
 
 // A platform may well preload during initialization, so whether an ad is ready
@@ -40,6 +41,7 @@ async function started({ createController, controls }, { removeAdsFlag = false, 
   controls.ads.available(adsAvailable);
   const recorder = recordCallbacks('initializePlatformServices', { locale: 'en-US', removeAdsFlag });
   await controller.initializePlatformServices(recorder.bag);
+  await reachSdk();
   return { controller, ...recorder };
 }
 
@@ -72,10 +74,12 @@ export const cases = [
     async run(harness) {
       const { controller, names } = await started(harness);
       controller.preloadInterstitialAd();
+      await reachSdk();
       startShow(controller.showInterstitialAd());
       await reachSdk();
       harness.controls.ads.interstitial.present();
       harness.controls.ads.interstitial.complete();
+      await reachSdk();
 
       assert.deepEqual(
         only(names(), 'Interstitial'),
@@ -90,10 +94,12 @@ export const cases = [
     async run(harness) {
       const { controller, names } = await started(harness);
       controller.preloadInterstitialAd();
+      await reachSdk();
       startShow(controller.showInterstitialAd());
       await reachSdk();
       harness.controls.ads.interstitial.silent();
       harness.controls.clock.runAll();
+      await reachSdk();
 
       assert.equal(
         count(names(), 'onInterstitialShowFailed'),
@@ -124,10 +130,12 @@ export const cases = [
     async run(harness) {
       const { controller, names } = await started(harness);
       controller.preloadRewardedAd();
+      await reachSdk();
       startShow(controller.showRewardedAd());
       await reachSdk();
       harness.controls.ads.rewarded.present();
       harness.controls.ads.rewarded.complete();
+      await reachSdk();
 
       const rewarded = only(names(), 'Rewarded');
       assert.equal(count(rewarded, 'onRewardedShown'), 1);
@@ -145,11 +153,13 @@ export const cases = [
     async run(harness) {
       const { controller, names } = await started(harness);
       controller.preloadRewardedAd();
+      await reachSdk();
       startShow(controller.showRewardedAd());
       await reachSdk();
       harness.controls.ads.rewarded.present();
       harness.controls.ads.rewarded.complete();
       harness.controls.ads.rewarded.complete();
+      await reachSdk();
 
       assert.equal(
         count(names(), 'onRewardedComplete'),
@@ -164,10 +174,12 @@ export const cases = [
     async run(harness) {
       const { controller, names } = await started(harness);
       controller.preloadInterstitialAd();
+      await reachSdk();
       startShow(controller.showInterstitialAd());
       await reachSdk();
       harness.controls.ads.interstitial.present();
       harness.controls.ads.interstitial.complete();
+      await reachSdk();
       const settled = only(names(), 'Interstitial');
 
       // Everything the SDK could still say about an attempt that is over.
@@ -175,6 +187,7 @@ export const cases = [
       harness.controls.ads.interstitial.complete();
       harness.controls.ads.interstitial.fail();
       harness.controls.clock.runAll();
+      await reachSdk();
 
       assert.deepEqual(
         only(names(), 'Interstitial'),
@@ -209,6 +222,7 @@ export const cases = [
       await reachSdk();
       harness.controls.ads.interstitial.present();
       harness.controls.ads.interstitial.complete();
+      await reachSdk();
 
       assert.equal(
         count(names(), 'onInterstitialShown'),
@@ -229,12 +243,85 @@ cases.push({
     await reachSdk();
     harness.controls.ads.rewarded.present();
     harness.controls.clock.runAll();
+    await reachSdk();
     const closed = count(names(), 'onRewardedClosed');
     assert.equal(closed, 1);
     harness.controls.ads.rewarded.complete();
     harness.controls.ads.rewarded.complete();
+    await reachSdk();
     assert.equal(confirmations, 1, 'UI timeout must not discard a confirmed view');
     assert.equal(count(names(), 'onRewardedClosed'), closed);
     assert.equal(count(names(), 'onRewardedComplete'), 0, 'bound and legacy paths must not both pay');
   },
 });
+
+
+cases.push({
+  name: 'false-after-failure-does-not-finish-the-next-request',
+  environment: 'portal-ads',
+  async run(harness) {
+    const { controller, names } = await started(harness, { adsAvailable: false });
+    const result = await controller.showRewardedAd();
+    assert.equal(result, false);
+    assert.equal(count(names(), 'onRewardedShowFailed'), 1);
+    harness.controls.ads.available(true);
+    controller.preloadRewardedAd();
+    await reachSdk();
+    startShow(controller.showRewardedAd());
+    await reachSdk();
+    harness.controls.ads.rewarded.present();
+    harness.controls.ads.rewarded.complete();
+    await reachSdk();
+    assert.equal(count(names(), 'onRewardedShowFailed'), 1);
+    assert.equal(count(names(), 'onRewardedComplete'), 1);
+    assert.equal(count(names(), 'onRewardedClosed'), 1);
+  },
+}, {
+  name: 'false-for-busy-rewarded-keeps-the-accepted-request',
+  environment: 'portal-ads',
+  async run(harness) {
+    const { controller, names } = await started(harness);
+    startShow(controller.showRewardedAd());
+    await reachSdk();
+    assert.equal(await controller.showRewardedAd(), false);
+    assert.equal(count(names(), 'onRewardedShowFailed'), 0);
+    harness.controls.ads.rewarded.present();
+    harness.controls.ads.rewarded.complete();
+    await reachSdk();
+    assert.equal(count(names(), 'onRewardedComplete'), 1);
+    assert.equal(count(names(), 'onRewardedClosed'), 1);
+  },
+});
+
+// The exact same assertions run through both native SDK transports. Only the
+// fixture environment changes; none may substitute the production controller.
+export const nativeCases = ['native-admob-ads', 'native-yandex-ads'].flatMap(environment => [
+  ...cases.map(testCase => ({ ...testCase, name: `${environment}: ${testCase.name}`, environment })),
+  ...['interstitial', 'rewarded'].map(format => ({
+    name: `${environment}: ${format} reserves both formats until native termination`,
+    environment,
+    async run(harness) {
+      const { controller } = await started(harness);
+      const other = format === 'rewarded' ? 'interstitial' : 'rewarded';
+      const method = kind => kind === 'rewarded' ? 'showRewardedAd' : 'showInterstitialAd';
+      startShow(controller[method(format)]());
+      await reachSdk();
+      const calls = harness.controls.ads.showCount();
+      assert.equal(await controller[method(other)](), false);
+      assert.equal(harness.controls.ads.showCount(), calls);
+      harness.controls.clock.runAll();
+      await reachSdk();
+      assert.equal(await controller[method(other)](), false);
+      assert.equal(harness.controls.ads.showCount(), calls, 'JS timeout cannot release the native reservation');
+      harness.controls.ads[format].complete();
+      await reachSdk();
+      controller[other === 'rewarded' ? 'preloadRewardedAd' : 'preloadInterstitialAd']();
+      await reachSdk();
+      startShow(controller[method(other)]());
+      await reachSdk();
+      assert.equal(harness.controls.ads.showCount(), calls + 1, 'native terminal event releases the reservation');
+      harness.controls.ads[other].complete();
+      await reachSdk();
+    },
+  })),
+]);

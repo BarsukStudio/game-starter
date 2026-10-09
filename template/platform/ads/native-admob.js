@@ -1,3 +1,4 @@
+import { createBannerTelemetry } from './banner-telemetry.js';
 // AdMob native ads, through the Capacitor community plugin.
 //
 // The default native ad stack: everything that is not routed to Yandex by a
@@ -23,7 +24,8 @@ import {
 import { debugLog } from '../../debug.js';
 import { APP_CONFIG } from '../config.js';
 import { getNativeKey } from '../env.js';
-import { readConsentSignals, hasYandexConsent, showIosConsentForm, showIosPrivacyOptionsForm } from '../consent-signals.js';
+import { beginConsentTelemetry, recordConsentAttempt } from '../consent-telemetry.js';
+import { bindAdRevenueEvents } from './ad-revenue.js';
 
 let deps = null;
 let interstitialOptions = null;
@@ -58,7 +60,7 @@ export function isPresentationUnresolved(format) {
 }
 
 function beginPresentation(format) {
-  if (shows[format]) throw new Error(`Previous AdMob ${format} presentation has not settled`);
+  if (Object.values(shows).some(Boolean)) throw new Error(`Previous AdMob ${format} presentation has not settled`);
   return (shows[format] = deps[format].captureShow());
 }
 
@@ -78,6 +80,112 @@ function getConfig() {
   };
 }
 
+// Recover only observed failures. Healthy banners keep SDK-managed refresh.
+let bannerTelemetry = null;
+let bannerOptions = null;
+let bannerRetryTimer = null;
+let bannerRetryCount = 0;
+let bannerRecoveryAfter = 0;
+let bannerFailed = false;
+let bannerAttempt = 0;
+let bannerListenersBound = false;
+
+function clearBannerRetry() {
+  if (bannerRetryTimer !== null) clearTimeout(bannerRetryTimer);
+  bannerRetryTimer = null;
+}
+
+function stopBannerRecovery() {
+  bannerTelemetry?.stop();
+  clearBannerRetry();
+  bannerOptions = null;
+  bannerFailed = false;
+  bannerRetryCount = 0;
+  bannerAttempt++;
+}
+
+function scheduleBannerRetry() {
+  if (!bannerOptions || !bannerFailed || deps.isAdsRemoved()
+    || document.visibilityState === 'hidden' || bannerRetryTimer !== null) return;
+  if (bannerRetryCount >= 3) {
+    bannerRecoveryAfter = performance.now() + 30000;
+    bannerTelemetry?.retryExhausted();
+    return;
+  }
+  bannerTelemetry?.retryScheduled(bannerRetryCount + 1, 5000 * (2 ** bannerRetryCount));
+  bannerRetryTimer = setTimeout(() => {
+    bannerRetryTimer = null;
+    if (!bannerOptions || deps.isAdsRemoved() || document.visibilityState === 'hidden') return;
+    bannerRetryCount++;
+    requestBanner();
+  }, 5000 * (2 ** bannerRetryCount));
+}
+
+function requestBanner() {
+  if (!bannerOptions || deps.isAdsRemoved()) return;
+  if (document.visibilityState === 'hidden') {
+    bannerFailed = true;
+    return;
+  }
+  bannerFailed = false;
+  const attempt = ++bannerAttempt;
+  const options = bannerOptions;
+  void Promise.resolve().then(() => {
+    if (attempt !== bannerAttempt || !bannerOptions || deps.isAdsRemoved()) return;
+    bannerTelemetry?.request(bannerRetryCount);
+    return AdMob.showBanner(options);
+  }).catch((error) => {
+    if (attempt !== bannerAttempt || !bannerOptions) return;
+    bannerTelemetry?.failed(error, 'bridge_rejection');
+    console.warn('AdMob banner load failed', error);
+    bannerFailed = true;
+    scheduleBannerRetry();
+  });
+}
+
+function recoverBannerOnActivity() {
+  if (!bannerOptions || !bannerFailed || deps.isAdsRemoved()
+    || document.visibilityState === 'hidden' || bannerRetryTimer !== null) return;
+  if (bannerRetryCount >= 3) {
+    // A real lifecycle/network signal opens one new bounded budget. No polling.
+    const delay = Math.max(0, bannerRecoveryAfter - performance.now());
+    bannerRetryTimer = setTimeout(() => {
+      bannerRetryTimer = null;
+      if (!bannerOptions || deps.isAdsRemoved() || document.visibilityState === 'hidden') return;
+      bannerRetryCount = 0;
+      requestBanner();
+    }, delay);
+    return;
+  }
+  scheduleBannerRetry();
+}
+
+async function bindBannerRecovery() {
+  if (bannerListenersBound) return;
+  await Promise.all([
+    AdMob.addListener(BannerAdPluginEvents.Loaded, () => {
+      if (!bannerOptions) return;
+      bannerTelemetry?.loaded();
+      bannerAttempt++;
+      bannerFailed = false;
+      bannerRetryCount = 0;
+      clearBannerRetry();
+    }),
+    AdMob.addListener(BannerAdPluginEvents.FailedToLoad, (error) => {
+      if (!bannerOptions) return;
+      bannerTelemetry?.failed(error, 'sdk_callback');
+      bannerFailed = true;
+      scheduleBannerRetry();
+    }),
+  ]);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') clearBannerRetry();
+    else recoverBannerOnActivity();
+  });
+  window.addEventListener('online', recoverBannerOnActivity);
+  bannerListenersBound = true;
+}
+
 // Whether a request bag exists to fetch with. The two are separate on purpose:
 // an owner gets rewarded options but never interstitial ones, so one shared
 // readiness answer would let the bridge open a load that can never settle.
@@ -89,70 +197,170 @@ export function isRewardedReady() {
   return Boolean(rewardOptions);
 }
 
-// Both native providers share one UMP update per WebView launch. A fallback
-// from Yandex to AdMob must not ask twice or bypass a failed consent flow.
+// Cache user decisions; only technical failures allow an event-driven retry.
 let consentPromise = null;
-let consentInfo = { canRequestAds: false, privacyOptionsRequired: false, yandexConsent: false };
+let consentRetryable = false;
+let consentInfo = { canRequestAds: false, privacyOptionsRequired: false };
 
 export function getNativeConsentInfo() {
   return { ...consentInfo };
 }
 
 export function prepareNativeConsent() {
-  if (!consentPromise) consentPromise = collectNativeConsent();
+  if (!consentPromise) {
+    consentPromise = collectNativeConsent().then(result => {
+      if (consentRetryable) consentPromise = null;
+      return result;
+    });
+  }
   return consentPromise;
 }
 
-async function collectNativeConsent() {
-  try {
-    let info = await AdMob.requestConsentInfo();
-    if (info.status === AdmobConsentStatus.REQUIRED && info.isConsentFormAvailable) {
-      info = await (getNativeKey() === 'ios' ? showIosConsentForm() : AdMob.showConsentForm());
-    }
-    consentInfo = {
-      canRequestAds: info.canRequestAds === true,
-      privacyOptionsRequired: info.privacyOptionsRequirementStatus === 'REQUIRED',
-      yandexConsent: false,
-    };
-    if (consentInfo.canRequestAds) {
-      try {
-        consentInfo.yandexConsent = hasYandexConsent(await readConsentSignals());
-      } catch (error) {
-        // Missing native choices never become permission for personalization.
-        console.warn('Native consent choices unavailable; Yandex consent stays false.', error);
+// Count foreground time only. Pausing cannot consume a retry or open a form.
+export function waitForConsentRetry(delay) {
+  return new Promise((resolve) => {
+    let remaining = delay;
+    let timer = null;
+    let started = 0;
+    function update() {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+        remaining = Math.max(0, remaining - (performance.now() - started));
       }
+      if (document.visibilityState === 'hidden') return;
+      if (remaining <= 0) {
+        document.removeEventListener('visibilitychange', update);
+        resolve();
+        return;
+      }
+      started = performance.now();
+      timer = setTimeout(update, remaining);
     }
-  } catch (error) {
-    console.warn('Ad consent flow failed; native ads stay disabled.', error);
+    document.addEventListener('visibilitychange', update);
+    update();
+  });
+}
+
+async function collectNativeConsent() {
+  consentRetryable = false;
+  const finishTelemetry = beginConsentTelemetry('startup');
+  const delays = [5000, 15000];
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let stage = 'info_update';
+    try {
+      let info = await AdMob.requestConsentInfo();
+      if (info.status === AdmobConsentStatus.REQUIRED && info.isConsentFormAvailable) {
+        stage = 'consent_form';
+        if (document.visibilityState === 'hidden') await waitForConsentRetry(0);
+        info = await AdMob.showConsentForm();
+      }
+      consentRetryable = false;
+      consentInfo = {
+        canRequestAds: info.canRequestAds === true,
+        privacyOptionsRequired: info.privacyOptionsRequirementStatus === 'REQUIRED',
+      };
+      // REQUIRED without an available form is not a completed user decision.
+      consentRetryable = !consentInfo.canRequestAds && info.status === AdmobConsentStatus.REQUIRED
+        && !info.isConsentFormAvailable;
+      recordConsentAttempt({ attempt, stage, canRequestAds: consentInfo.canRequestAds });
+      finishTelemetry({ stage, canRequestAds: consentInfo.canRequestAds, attemptCount: attempt });
+      return getNativeConsentInfo();
+    } catch (error) {
+      // Only the native UMP callback may preserve permission after an error.
+      consentInfo = {
+        canRequestAds: error?.data?.canRequestAds === true,
+        privacyOptionsRequired: error?.data?.privacyOptionsRequired === true,
+      };
+      // Android: INTERNET_ERROR=2, TIME_OUT=4. iOS: network=3;
+      // iOS code 2 is INVALID_APP_ID and must never be retried.
+      const code = error?.code;
+      const networkError = getNativeKey() === 'ios'
+        ? code === 3 || code === '3'
+        : getNativeKey() === 'android' && [2, '2', 4, '4'].includes(code);
+      const willRetry = !consentInfo.canRequestAds && stage === 'info_update'
+        && networkError && attempt <= delays.length;
+      recordConsentAttempt({ attempt, stage, failed: true, error,
+        canRequestAds: consentInfo.canRequestAds, willRetry });
+      console.warn('Ad consent flow failed; SDK eligibility determines ad availability.', error);
+      consentRetryable = !consentInfo.canRequestAds && networkError;
+      if (!willRetry) {
+        finishTelemetry({ stage, failed: true, error,
+          canRequestAds: consentInfo.canRequestAds, attemptCount: attempt });
+        return getNativeConsentInfo();
+      }
+      await waitForConsentRetry(delays[attempt - 1]);
+    }
   }
-  return getNativeConsentInfo();
 }
 
 export function showNativePrivacyOptions() {
-  return getNativeKey() === 'ios' ? showIosPrivacyOptionsForm() : AdMob.showPrivacyOptionsForm();
+  return AdMob.showPrivacyOptionsForm();
 }
 
 export function hasPresentation() {
   return Object.values(shows).some(Boolean);
 }
 
-export async function init(injected) {
+let initializationPromise = null;
+let sdkInitialized = false;
+let initializationRetryable = false;
+let retryAfter = 0;
+
+export function canRetryInitialization() {
+  return initializationRetryable && !initializationPromise;
+}
+
+export function init(injected) {
+  if (!initializationPromise) {
+    const delay = initializationRetryable ? Math.max(0, retryAfter - performance.now()) : 0;
+    initializationRetryable = false;
+    initializationPromise = (delay > 0 ? waitForConsentRetry(delay) : Promise.resolve())
+      .then(() => initialize(injected)).then(ready => {
+      if (!ready && initializationRetryable) {
+        retryAfter = performance.now() + 30000;
+        initializationPromise = null;
+      }
+      return ready;
+    });
+  }
+  return initializationPromise;
+}
+
+async function initialize(injected) {
+  stopBannerRecovery();
   deps = injected;
   const config = getConfig();
-  const consent = await prepareNativeConsent();
-  if (!consent.canRequestAds) return false;
-  // Neither ATT refusal nor an ATT bridge error grants data-processing consent.
-  await requestIosTrackingAuthorization();
+  bannerTelemetry = createBannerTelemetry('admob', config.testMode || config.useSampleAds || config.testingDevices?.length > 0);
   try {
-    await AdMob.initialize({
-      initializeForTesting: config.testMode,
-      testingDevices: config.testingDevices,
-    });
+    if (!sdkInitialized) {
+      await AdMob.initialize({
+        initializeForTesting: config.testMode,
+        testingDevices: config.testingDevices,
+      });
+      sdkInitialized = true;
+    }
     debugLog(`AdMob OK (${config.testMode ? 'test' : 'production'} ads)`);
   } catch (error) {
+    initializationRetryable = true;
     console.warn('AdMob initialize failed', error);
     return false;
   }
+
+  // Stock iOS consent forms need the controller set by AdMob.initialize.
+  // Ad requests remain gated by UMP; SDK initialization is not consent.
+  const consent = await prepareNativeConsent();
+  if (!consent.canRequestAds) {
+    initializationRetryable = consentRetryable;
+    return false;
+  }
+  await requestIosTrackingAuthorization();
+
+  await bindAdRevenueEvents(AdMob, 'admob', {
+    banner: BannerAdPluginEvents.AdPaid,
+    interstitial: InterstitialAdPluginEvents.AdImpression,
+    rewarded: RewardAdPluginEvents.AdImpression,
+  }, config.testMode || config.useSampleAds || config.testingDevices?.length > 0);
 
   if (!deps.isAdsRemoved()) {
     AdMob.addListener(BannerAdPluginEvents.SizeChanged, (size) => {
@@ -169,22 +377,15 @@ export async function init(injected) {
     // The consent form and ATT prompt above are modal, so ownership can land
     // mid-init. Re-read the flag instead of trusting the one checked on entry.
     if (!deps.isAdsRemoved()) {
-      const bannerOptions = {
+      await bindBannerRecovery();
+      bannerOptions = {
         adId: config.banner,
         adSize: BannerAdSize.ADAPTIVE_BANNER,
         position: BannerAdPosition.BOTTOM_CENTER,
         margin: 0,
         isTesting: config.useSampleAds,
       };
-      // One application request. Refresh and failure behavior belong to the
-      // unmodified plugin/SDK; do not start an application retry timer.
-      // Stock Android can leave this promise pending when a banner already
-      // exists after a WebView reload. Fullscreen setup must not depend on it.
-      void Promise.resolve()
-        .then(() => {
-          if (!deps.isAdsRemoved()) return AdMob.showBanner(bannerOptions);
-        })
-        .catch((error) => console.warn('AdMob banner load failed', error));
+      requestBanner();
       deps.preloadInterstitial();
     }
   }
@@ -251,6 +452,7 @@ export function preloadRewarded() {
 }
 
 export function hideBanner() {
+  stopBannerRecovery();
   void Promise.resolve(AdMob.hideBanner())
     .catch((error) => console.warn('AdMob banner hide failed', error));
 }
@@ -259,6 +461,7 @@ export function hideBanner() {
 // the one left behind has to go before the new provider draws its own. Nothing
 // to load here — unlike the Yandex plugin this one is always present.
 export function removeBanner() {
+  stopBannerRecovery();
   return AdMob.removeBanner();
 }
 

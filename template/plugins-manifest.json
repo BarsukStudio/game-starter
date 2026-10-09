@@ -1,19 +1,20 @@
 {
   "schemaVersion": 1,
-  "baselineDate": "2026-09-17",
+  "baselineDate": "2026-10-06",
   "evidence": "Reference package set used by local Android and unsigned iOS Debug builds. Device, Firebase console and store acceptance remain separate.",
   "platform": {
     "dependencies": {
-      "@barsuk/game-runtime": "file:vendor/barsuk-game-runtime-0.2.1.tgz",
+      "@barsuk/game-runtime": "file:vendor/barsuk-game-runtime-0.2.2.tgz",
       "@capacitor/core": "8.5.2",
-      "@capacitor/app": "8.1.1",
+      "@capacitor/app": "8.1.2",
       "@capacitor/splash-screen": "8.0.2",
-      "@capacitor-community/admob": "8.1.0",
+      "@capacitor-firebase/analytics": "8.5.2",
+      "@capacitor-community/admob": "8.2.0",
       "capacitor-plugin-yandex-ads": "https://github.com/BarsukStudio/capacitor-plugin-yandex-ads/archive/86d30e7000a57dd8c406900f8325d0a82f0c5700.tar.gz",
       "capacitor-plugin-cdv-purchase": "13.18.0"
     },
     "devDependencies": {
-      "vite": "8.3.0"
+      "vite": "8.3.3"
     }
   },
   "android": {
@@ -46,7 +47,6 @@
   "diagnostics": {
     "dependencies": {
       "@capacitor-firebase/app": "8.5.2",
-      "@capacitor-firebase/analytics": "8.5.2",
       "@capacitor-firebase/crashlytics": "8.5.2",
       "@capacitor-firebase/performance": "8.5.2",
       "firebase": "12.19.0"
@@ -65,8 +65,36 @@
   },
   "localArchives": {
     "@barsuk/game-runtime": {
-      "version": "0.2.1",
-      "integrity": "sha512-NiO724TzY/WRgW23HeVPtojn2RfAVVDyhd2jTo5drXFwI+NHnFVkP6wFqMtKGQ34b1egayzwphdaq0muWB8zYA=="
+      "version": "0.2.2",
+      "integrity": "sha512-tNfcdcdMyIHjZE/7KSquOIDBqf7EyoaYAyvwaFUf7z05pLV01pj5e0Y7NUIQbViIkPT9xLNUeeR5K7Ypa3tfVw=="
+    },
+    "@barsuk/capacitor-cas": {
+      "version": "0.1.3",
+      "integrity": "sha512-kDSeynAEALOUdCyZNQJpDhwXIAtS+BmaAexKEWEzpX3D1d4QdZUIdZTRYUQm62EgOOfRaSV7VOq9HrOHNoQc4g=="
+    },
+    "capacitor-plugin-cdv-purchase": {
+      "version": "13.18.0-barsuk.1",
+      "integrity": "sha512-tEbE85kc33ZSS3BzdAg0F5NY7S9AjcgOG/SQ0RrPRtfJ851KeByAeIFRkvJliil3C9g0OM6q2s9ey0ZH/p+uGA=="
+    }
+  },
+  "acceptedPins": {
+    "@barsuk/game-runtime": [
+      "https://github.com/BarsukStudio/game-runtime/archive/39aba0d9fd437337d513904165c14c9debf56536.tar.gz"
+    ],
+    "capacitor-plugin-cdv-purchase": [
+      "file:vendor/capacitor-plugin-cdv-purchase-13.18.0-barsuk.1.tgz"
+    ]
+  },
+  "advertising": {
+    "cas": {
+      "dependencies": {
+        "@barsuk/capacitor-cas": "file:vendor/barsuk-capacitor-cas-0.1.3.tgz"
+      },
+      "replaces": [
+        "@capacitor-community/admob",
+        "capacitor-plugin-yandex-ads"
+      ],
+      "sdkVersion": "4.8.0"
     }
   }
 }

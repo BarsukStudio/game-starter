@@ -9,8 +9,24 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.3.0**; package: **0.1.0-alpha.9** (local candidate).
-Contract 0.3 adds optional ad-availability callbacks, request-bound late reward
+Current contract: **0.6.0**; package: **0.1.0-alpha.22** (local candidate).
+Contract 0.6 defines refusal semantics in `contract/manifest.js` and runs the same
+ad cases in `portal-ads`, `native-admob-ads` and `native-yandex-ads`. Native fixtures
+must retain the real controller and adapters; `testing/native-ads.mjs` provides
+optional SDK stand-ins shared by consumers. Native cases also check exclusion of
+both fullscreen formats through JS timeout until the native terminal event.
+The template includes Yandex recovery without provider fallback, Yandex banner
+telemetry, privacy telemetry and AdMob cross-format presentation exclusion.
+AdMob/Yandex custom revenue collection supports Android and iOS; the reviewed native
+patch forwards nullable Yandex iOS impression data for all three ad formats.
+Contract 0.5 adds the synchronous, side-effect-free `describePurchaseTransaction(handle)`
+method. Its plain `{ productId, transactionId, pending }` result identifies delivery
+without exposing SDK fields or verifying/finishing the transaction. Missing identity
+is an empty string; an absent handle returns empty IDs and `pending: false`.
+Ad conformance waits one event-loop turn after driven SDK outcomes, so synchronous
+and Promise-delivered callbacks meet the same assertions.
+Contract 0.4 permits privacy inventory refresh without a WebView reload; old-choice
+ads must always be retired. Contract 0.3 added optional ad-availability callbacks, request-bound late reward
 confirmation, and independent native lifecycle source identities. Consumer fixtures
 must expose `controls.lifecycle.appState(bool)`, `pause()` and `resume()` in
 `native-store`. Run the canonical suite against the real controller before repinning.
@@ -78,13 +94,15 @@ this package — consumers assert that in their own contract tests.
 
 Preserve the previous installed starter package before installing a candidate.
 Run `barsuk-compare-template --root /path/to/game --baseline /path/to/previous-starter`.
+Pass `--native-stack cas` for a CAS consumer; comparison uses the selected overlay.
 The report distinguishes unchanged files, consumer-only changes, template updates,
 and files changed on both sides. It never overwrites game policy or native settings.
 Review `review-both` files and missing optional modules explicitly; copying the
 whole platform tree is not an update strategy. Native patch changes travel with
 their adapters and regression tests.
 
-Runtime 0.2.1 fixes confirmation deadlines and dispatch-attempt identity in
+Runtime 0.2.2 adds SDK inventory availability without resetting presentations or
+rewards. Runtime 0.2.1 fixes confirmation deadlines and dispatch-attempt identity in
 `purchase-finish`. The local Gym candidate consumes npm archives under `vendor/`
 with lockfile integrity. Published consumers keep their existing exact SHA until
 an explicit release and migration; do not fabricate a future SHA or a device pass.
@@ -114,3 +132,34 @@ The full contract for contributors is in `AGENTS.md`. The short version:
 ## Licence
 
 MIT.
+
+## Native advertising variants
+
+Select the native stack explicitly when creating a project:
+
+```bash
+barsuk-export-template --native-stack cas --out /path/to/empty-seed
+# Or --native-stack admob for the existing AdMob/Yandex routing.
+```
+
+Both variants share this package and canonical contract. CAS overlays the provider
+bridge, revenue/consent telemetry and release scripts; portals, purchases, runtime
+and shell stay shared. The export omits the other native stack and its patches.
+Consumer config sets `ads.nativeStack` to the same selection. Existing consumers
+without that field retain the AdMob/Yandex schema. Export refuses nonempty output.
+
+The seed needs consumer config/debug/build seams, npm pins from
+`template/plugins-manifest.json`, native configuration from [PLUGINS.md](PLUGINS.md),
+and consumer `verify:js` / `verify:native` release gates. It does not install SDKs,
+sync native projects or overwrite existing game policy. The CAS overlay was
+extracted from Gym2; device and account acceptance stays consumer-owned.
+
+Both advertising variants include Firebase Analytics revenue binding. Starter
+tests execute the freshly exported AdMob wiring check and the CAS Android release
+preflight/sync script with external native commands mocked. They verify the
+exported code path; native builds and device delivery remain separate checks.
+
+When Ruby and `xcodeproj` are available, the iOS preparation tests also execute
+the exported wrapper against real temporary Xcode projects. Same-path CAS JSON
+references are collapsed after configuration refresh; distinct configuration
+files stop preparation. Repeated preparation preserves linker flags and resources.

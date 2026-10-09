@@ -139,3 +139,22 @@ test('a config that is not an object is reported once and not walked', () => {
     assert.ok(problems[0].startsWith('config:'));
   }
 });
+
+function casConfig() {
+  const config = validConfig();
+  config.platform = { runtimeTargetGlobal: '__EXAMPLE__' };
+  config.ads = { nativeStack: 'cas', nativeTestMode: true, cas: {
+    audience: 'undefined', android: { casId: 'example.app' }, ios: { casId: '123456' },
+  } };
+  return config;
+}
+test('CAS-only config needs no legacy provider IDs or QA storage keys', () => {
+  assert.deepEqual(validateConsumerConfig(casConfig()), []);
+});
+test('CAS rejects missing ID, implicit audience, mixed and unknown stacks', () => {
+  for (const mutate of [c => delete c.ads.cas.ios.casId, c => delete c.ads.cas.audience,
+    c => { c.ads.admob = {}; }, c => { c.ads.nativeStack = 'unknown'; }]) {
+    const config = casConfig(); mutate(config);
+    assert.ok(validateConsumerConfig(config).length);
+  }
+});

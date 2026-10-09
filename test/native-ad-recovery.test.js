@@ -9,7 +9,7 @@ const moduleUrl = (text) => `data:text/javascript,${encodeURIComponent(text)}`;
 let sequence = 0;
 async function fixture(consent = async () => ({ canRequestAds: true })) {
   const timers = new Map(); const listeners = new Map();
-  const f = { timers, banners: 0, removed: false, preloads: 0, clock: 0 };
+  const f = { telemetry: [], timers, banners: 0, removed: false, preloads: 0, clock: 0 };
   const visibilityListeners = new Set();
   f.document = {
     visibilityState: 'visible',
@@ -33,32 +33,41 @@ async function fixture(consent = async () => ({ canRequestAds: true })) {
     assert.equal(timers.size, 1);
     const [id, timer] = timers.entries().next().value;
     timers.delete(id); timer.fn();
-    await Promise.resolve(); await Promise.resolve();
+    await new Promise(resolve => setImmediate(resolve));
     return timer.ms;
   };
   globalThis.__adRecoveryFixture = f;
   const stub = moduleUrl(`
     const f = globalThis.__adRecoveryFixture;
+    export const beginConsentTelemetry = () => () => {}; export const recordConsentAttempt = () => {};
+    export const recordConsentSignalsError = () => {};
+    export const createBannerTelemetry = () => ({ request() {}, loaded() {}, failed() {}, retryScheduled() {}, retryExhausted() {}, stop() {} });
+    export const FirebaseAnalytics = { logEvent: async event => f.telemetry.push(event) };
+    export const isNative = true; export const nativePlatform = 'android';
     export const AdMob = f.sdk;
     export const AdmobConsentStatus = { REQUIRED: 'REQUIRED' };
     export const BannerAdPluginEvents = { Loaded: 'loaded', FailedToLoad: 'failed', SizeChanged: 'size' };
     export const BannerAdSize = { ADAPTIVE_BANNER: 'adaptive' };
     export const BannerAdPosition = { BOTTOM_CENTER: 'bottom' };
-    export const InterstitialAdPluginEvents = {}; export const RewardAdPluginEvents = {};
+    export const InterstitialAdPluginEvents = { Showed: 'interstitialShown', Dismissed: 'interstitialDismissed', FailedToShow: 'interstitialFailed' }; export const RewardAdPluginEvents = { Showed: 'rewardedShown', Dismissed: 'rewardedDismissed', FailedToShow: 'rewardedFailed' };
     export const APP_CONFIG = { ads: { admob: { android: {} } } };
     export const getNativeKey = () => 'android'; export const debugLog = () => {};
     export const createNativeAdEvents = (events) => events;
+    export { createRequestId } from '${new URL('../template/platform/request-id.js', import.meta.url).href}';
+    export const bindAdRevenueEvents = async () => {};
     export const readConsentSignals = async () => ({ gdprApplies: false });
-    export const showIosConsentForm = async () => { throw Error('unexpected iOS transport'); };
-    export const showIosPrivacyOptionsForm = async () => { throw Error('unexpected iOS transport'); };
+    export const showIosConsentForm = async () => { throw Error("unexpected iOS transport"); }; export const showIosPrivacyOptionsForm = async () => { throw Error("unexpected iOS transport"); };
     export const hasYandexConsent = () => true;
     // Each fixture gets its own SDK binding even when imports are cached.
     // ${++sequence}
   `);
-  const rewritten = source.replace(/from '([^']+)'/g, `from ${JSON.stringify(stub)}`);
+  const telemetrySource = readFileSync(new URL('../template/platform/ads/banner-telemetry.js', import.meta.url), 'utf8');
+  const telemetryUrl = moduleUrl(telemetrySource.replace(/from '([^']+)'/g, `from ${JSON.stringify(stub)}`));
+  const rewritten = source.replace(/from '([^']+)'/g, (_, spec) => `from ${JSON.stringify(spec === './banner-telemetry.js' ? telemetryUrl : stub)}`);
   f.adapter = await import(moduleUrl(`
     const f = globalThis.__adRecoveryFixture;
     const setTimeout = (fn, ms) => { const id = ++f.clock; f.timers.set(id, { fn, ms }); return id; };
+    const window = { addEventListener() {} };
     const document = f.document;
     const clearTimeout = (id) => f.timers.delete(id);
     const console = { warn() {} };
@@ -73,20 +82,52 @@ async function fixture(consent = async () => ({ canRequestAds: true })) {
   return f;
 }
 
-test('banner failures and visibility changes never trigger application retries', async () => {
-  const f = await fixture(); assert.equal(await f.init(), true);
-  for (let i = 0; i < 10; i++) {
-    f.emit('failed', { code: 3 }); f.visibility('hidden'); f.visibility('visible');
+test('observed banner failures retry at 5/10/20 seconds, coalesce, and stop at the cap', async () => {
+  const f = await fixture(); await f.init();
+  for (const delay of [5000, 10000, 20000]) {
+    f.emit('failed'); f.emit('failed');
+    assert.equal(f.timers.size, 1);
+    assert.equal(await f.tick(), delay);
   }
-  assert.equal(f.banners, 1); assert.equal(f.timers.size, 0);
-  assert.equal(f.visibilityListeners.size, 0);
+  f.emit('failed');
+  assert.equal(f.banners, 4); assert.equal(f.timers.size, 0);
+  f.visibility('hidden'); f.visibility('visible');
+  assert.equal(f.timers.size, 1);
+  const cooldown = await f.tick();
+  assert.ok(cooldown > 29000 && cooldown <= 30000);
+  assert.equal(f.banners, 5);
 });
-
-test('banner rejection does not block fullscreen setup or start a retry', async () => {
+test('a loaded banner cancels retries and healthy visibility changes do not request again', async () => {
+  const f = await fixture(); await f.init();
+  f.emit('failed'); f.emit('loaded');
+  f.visibility('hidden'); f.visibility('visible');
+  assert.equal(f.timers.size, 0); assert.equal(f.banners, 1);
+  f.emit('failed'); assert.equal(await f.tick(), 5000);
+});
+test('background pauses failed-banner retries; foreground schedules one retry', async () => {
+  const f = await fixture(); await f.init(); f.emit('failed');
+  f.visibility('hidden'); assert.equal(f.timers.size, 0);
+  f.emit('failed'); assert.equal(f.timers.size, 0);
+  f.visibility('visible'); f.visibility('visible');
+  assert.equal(await f.tick(), 5000); assert.equal(f.banners, 2);
+});
+test('banner rejection does not block fullscreen and coalesces with its failure event', async () => {
   const f = await fixture();
-  f.sdk.showBanner = async () => { f.banners++; throw new Error('no fill'); };
-  assert.equal(await f.init(), true);
-  assert.equal(f.banners, 1); assert.equal(f.preloads, 2); assert.equal(f.timers.size, 0);
+  f.sdk.showBanner = async () => { f.banners++; throw Error('no fill'); };
+  await f.init(); await new Promise(resolve => setImmediate(resolve));
+  f.emit('failed'); assert.equal(f.preloads, 2); assert.equal(f.timers.size, 1);
+  assert.equal(await f.tick(), 5000); assert.equal(f.banners, 2);
+});
+test('late banner rejection after removal cannot schedule recovery', async () => {
+  const f = await fixture(); let reject;
+  f.sdk.showBanner = () => { f.banners++; return new Promise((_, r) => { reject = r; }); };
+  await f.init(); await f.adapter.removeBanner(); reject(Error('late'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.timers.size, 0); assert.equal(f.banners, 1);
+});
+test('Remove Ads acquired during retry delay prevents a new request', async () => {
+  const f = await fixture(); await f.init(); f.emit('failed'); f.removed = true;
+  await f.tick(); assert.equal(f.banners, 1); assert.equal(f.timers.size, 0);
 });
 
 test('a pending banner promise never blocks fullscreen setup', async () => {
@@ -117,10 +158,10 @@ test('hide and remove do not recreate a failed banner', async () => {
   }
 });
 
-test('stock consent errors disable ads without relying on patched error data', async () => {
+test('only explicit native SDK eligibility recovers a consent error', async () => {
   for (const value of [true, false, undefined, 'true']) {
     const f = await fixture(async () => { throw Object.assign(new Error('UMP unavailable'), { data: { canRequestAds: value } }); });
-    assert.equal(await f.init(), false); assert.equal(f.banners, 0); assert.equal(f.preloads, 0);
+    assert.equal(await f.init(), value === true); assert.equal(f.banners, value === true ? 1 : 0); assert.equal(f.preloads, value === true ? 2 : 0);
   }
 });
 
@@ -134,3 +175,48 @@ test('consent success requires explicit permission and form failures disable ads
   f.sdk.showConsentForm = async () => { throw new Error('form unavailable'); };
   assert.equal(await f.init(), false); assert.equal(f.banners, 0);
 });
+
+// Exercise the actual transport wiring, not only the isolated telemetry helper.
+test('banner recovery reports real requests, one error per attempt and the exhausted budget', async () => {
+  const f = await fixture(); await f.init();
+  for (const delay of [5000, 10000, 20000]) {
+    f.emit('failed', { code: 2 }); f.emit('failed', { code: 2 });
+    assert.equal(await f.tick(), delay);
+  }
+  f.emit('failed', { code: 3 }); f.emit('failed', { code: 3 });
+  await new Promise(resolve => setImmediate(resolve));
+  const count = name => f.telemetry.filter(e => e.name === name).length;
+  assert.equal(count('bs_banner_request'), 4);
+  assert.equal(count('bs_banner_error'), 4);
+  assert.equal(count('bs_banner_retry'), 3);
+  assert.equal(count('bs_banner_retry_exhausted'), 1);
+  f.adapter.hideBanner(); const before = f.telemetry.length;
+  f.emit('loaded'); f.emit('failed', { code: 2 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.telemetry.length, before);
+});
+
+
+for (const format of ['interstitial', 'rewarded']) {
+  test(`AdMob ${format} reserves both formats until native termination even after JS timeout`, async () => {
+    const f = await fixture();
+    let current = true, calls = 0;
+    const lifecycle = { captureShow: () => ({ isCurrent: () => current, showStarted() {}, showClosed() {}, showFailed() {}, rewardEarned() {} }) };
+    f.sdk.showInterstitial = () => { calls++; return new Promise(() => {}); };
+    f.sdk.showRewardVideoAd = f.sdk.showInterstitial;
+    await f.adapter.init({ interstitial: lifecycle, rewarded: lifecycle,
+      isAdsRemoved: () => false, preloadInterstitial() {}, preloadRewarded() {} });
+    void f.adapter[format === 'interstitial' ? 'showInterstitial' : 'showRewarded']();
+    for (const stillCurrent of [true, false]) {
+      current = stillCurrent;
+      await assert.rejects(f.adapter.showInterstitial(), /has not settled/);
+      await assert.rejects(f.adapter.showRewarded(), /has not settled/);
+      assert.equal(calls, 1);
+    }
+    f.emit(`${format}Dismissed`);
+    current = true;
+    assert.equal(await f.adapter.showRewarded(), true);
+    assert.equal(calls, 2);
+    f.emit('rewardedDismissed');
+  });
+}

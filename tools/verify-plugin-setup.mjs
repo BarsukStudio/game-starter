@@ -3,6 +3,7 @@
 // It checks declared source settings and installed metadata, never native behavior.
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -64,6 +65,11 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
   const consentAdapters = ['native-admob.js', 'native-yandex.js'].map(file => path.join(root, 'src/js/platform/ads', file));
   consent ||= consentAdapters.some(file => fs.existsSync(file) && /from\s*['"]\.\.\/consent-signals\.js['"]/.test(code(fs.readFileSync(file, 'utf8'))));
   const pkg = json('package.json');
+  const cas = Boolean(pkg.dependencies?.['@barsuk/capacitor-cas']);
+  // Keep unknown/child audiences restrictive. For an explicitly non-child
+  // audience, global denials strand non-TCF users after a notRequired flow.
+  const regionalCasConsent = cas && /\baudience\s*:\s*['"]notChildren['"]/.test(code(read('src/js/platform/config.js')));
+  check(!cas || !consent, 'CAS owns consent; remove the legacy ConsentSignals integration.');
   const lock = json('package-lock.json');
   const installedLock = json('node_modules/.package-lock.json');
   const declared = { ...pkg.dependencies, ...pkg.devDependencies };
@@ -72,7 +78,13 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
   if (diagnostics) groups.push(manifest.diagnostics);
   for (const section of ['dependencies', 'devDependencies']) {
     const expected = Object.assign({}, ...groups.map((group) => group[section]));
-    for (const [name, version] of Object.entries(expected)) {
+    if (cas && section === 'dependencies') {
+      for (const name of manifest.advertising.cas.replaces) delete expected[name];
+      Object.assign(expected, manifest.advertising.cas.dependencies);
+    }
+    for (const [name, baseline] of Object.entries(expected)) {
+      const pin = pkg[section]?.[name];
+      const version = manifest.acceptedPins?.[name]?.includes(pin) ? pin : baseline;
       const key = `node_modules/${name}`;
       const entry = lock.packages?.[key];
       const installed = installedLock.packages?.[key];
@@ -89,13 +101,34 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         && installed?.version === entry.version && actual.version === entry.version, `${name}: installed metadata differs from package-lock.json; reinstall the declared dependencies.`);
     }
   }
-  const plugins = { ...nativePlugins, ...(diagnostics ? firebasePlugins : {}) };
+  const plugins = { ...nativePlugins, '@capacitor-firebase/analytics': firebasePlugins['@capacitor-firebase/analytics'], ...(diagnostics ? firebasePlugins : {}) };
+  if (cas) {
+    for (const name of manifest.advertising.cas.replaces) {
+      delete plugins[name];
+      check(!declared[name] && !lock.packages?.[`node_modules/${name}`], `CAS: legacy plugin ${name} must be absent.`);
+    }
+    plugins['@barsuk/capacitor-cas'] = ['BarsukCapacitorCas', 'CASAdsPlugin'];
+    plugins['@capacitor-firebase/analytics'] = firebasePlugins['@capacitor-firebase/analytics'];
+    read('src/js/platform/ads/ad-revenue.js');
+    const pin = pkg.dependencies['@barsuk/capacitor-cas'];
+    const archive = pin?.startsWith('file:') ? path.join(root, pin.slice(5)) : '';
+    check(Boolean(archive) && fs.existsSync(archive) && 'sha512-' + createHash('sha512').update(fs.readFileSync(archive)).digest('base64') === manifest.localArchives['@barsuk/capacitor-cas'].integrity,
+      'CAS: archive bytes must match the reviewed plugin integrity.');
+    const adapter = code(read('src/js/platform/ads/native-cas.js'));
+    check(adapter.includes('@barsuk/capacitor-cas') && adapter.includes("'adEvent'") && adapter.includes('recordCasImpression(event)'), 'CAS: adapter must bind native events and custom revenue.');
+    check(!/native-admob|native-yandex/.test(code(read('src/js/platform/bridge.js'))), 'CAS: bridge must not import legacy native adapters.');
+    check(adapter.includes('applyConsentStatus(result.consentStatus)') && adapter.includes('applyConsentStatus(result.status)'),
+      'CAS: automatic and manual CMP completion must update privacy availability.');
+    check(!adapter.includes('activateNativeAnalytics'), 'CAS Analytics: collection must not depend on CMP completion.');
+    check(read('src/js/platform/native-analytics.js') === fs.readFileSync(new URL('../template/variants/cas/platform/native-analytics.js', import.meta.url), 'utf8'),
+      'CAS Analytics: event transport differs from the reviewed template.');
+  }
   const revenueFile = 'src/js/platform/ads/ad-revenue.js';
   if (fs.existsSync(path.join(root, revenueFile))) {
-    check(read(revenueFile) === fs.readFileSync(new URL('../template/platform/ads/ad-revenue.js', import.meta.url), 'utf8'),
+    check(read(revenueFile) === fs.readFileSync(new URL(cas ? '../template/variants/cas/platform/ads/ad-revenue.js' : '../template/platform/ads/ad-revenue.js', import.meta.url), 'utf8'),
       'Revenue: collector differs from the shared starter template; review the schema before updating consumers.');
     check(Boolean(declared['@capacitor-firebase/analytics']), 'Revenue: Firebase Analytics dependency is required.');
-    for (const provider of ['admob', 'yandex']) {
+    for (const provider of cas ? [] : ['admob', 'yandex']) {
       const adapter = code(read(`src/js/platform/ads/native-${provider}.js`));
       check(/import\s*\{\s*bindAdRevenueEvents\s*\}\s*from\s*['"]\.\/ad-revenue\.js['"]/.test(adapter)
         && new RegExp(`await\\s+bindAdRevenueEvents\\(\\s*\\w+,\\s*['"]${provider}['"],`).test(adapter),
@@ -108,11 +141,21 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       }
     }
 
-    if (targets.includes('android')) {
+    if (!cas && targets.includes('android')) {
       const yandex = code(read('node_modules/capacitor-plugin-yandex-ads/android/src/main/kotlin/com/barsukstudio/plugins/yandexads/YandexAdsPlugin.kt'));
       for (const format of ['banner', 'interstitial', 'rewarded']) {
         check(new RegExp(`(?:notifyListeners|notifyRequest)\\("${format}Impression",\\s*adEvent\\(${format}AdUnitId\\)\\.put\\("impressionData",\\s*impressionData\\?\\.rawData\\)\\)`).test(yandex),
           `Revenue: Android Yandex ${format} must forward impressionData.rawData.`);
+      }
+    }
+    if (!cas && targets.includes('ios')) {
+      const yandex = code(read('node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift'));
+      check(/payload\["impressionData"\]\s*=\s*impressionData\.rawData/.test(yandex)
+        && /payload\["impressionData"\]\s*=\s*NSNull\(\)/.test(yandex),
+      'Revenue: iOS Yandex must forward nullable impressionData.rawData.');
+      for (const format of ['banner', 'interstitial', 'rewarded']) {
+        check(new RegExp(`(?:notifyListeners|notifyRequest)\\("${format}Impression",[^\\n]*impressionEvent\\(${format}AdUnitID, impressionData\\)`).test(yandex),
+          `Revenue: iOS Yandex ${format} must forward impressionData.rawData.`);
       }
     }
   }
@@ -133,7 +176,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     const variables = code(read('android/variables.gradle'));
     const generated = code(read('android/app/capacitor.build.gradle'));
     const registry = json('android/app/src/main/assets/capacitor.plugins.json');
-    const classpaths = { ...manifest.android.classpaths, ...(diagnostics ? manifest.diagnostics.androidClasspaths : {}) };
+    const classpaths = { ...manifest.android.classpaths, ...(cas ? { 'com.cleveradssolutions:gradle-plugin': manifest.advertising.cas.sdkVersion } : {}), ...(diagnostics ? manifest.diagnostics.androidClasspaths : {}) };
     for (const [coordinate, version] of Object.entries(classpaths)) {
       check(new RegExp(`\\bclasspath\\s+['"]${escape(coordinate)}:${escape(version)}['"]`).test(rootGradle), `Android: missing active classpath ${coordinate}:${version}.`);
     }
@@ -144,6 +187,27 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       const project = name.replace(/^@/, '').replace('/', '-');
       check(new RegExp(`implementation\\s+project\\(['"]:${escape(project)}['"]\\)`).test(generated), `Android: ${name} missing from generated dependencies; run cap:sync:android.`);
       check(Array.isArray(registry) && registry.some((plugin) => plugin.pkg === name), `Android: ${name} missing from the generated plugin registry.`);
+    }
+    if (cas) {
+      check(Array.isArray(registry) && !registry.some(plugin => manifest.advertising.cas.replaces.includes(plugin.pkg)), 'CAS Android: legacy native bridges remain registered; sync the selected stack.');
+      check(/apply plugin:\s*['"]com\.cleveradssolutions\.gradle-plugin['"]/.test(appGradle) && /includeOptimalAds\s*=\s*true/.test(appGradle), 'CAS Android: apply the CAS plugin and select Optimal mediation.');
+      const source = read('android/app/src/main/AndroidManifest.xml').replace(/<!--[\s\S]*?-->/g, '');
+      for (const [key, value] of Object.entries({ firebase_analytics_collection_enabled: true,
+        google_analytics_tcf_data_enabled: true, google_analytics_default_allow_ad_storage: regionalCasConsent,
+        google_analytics_default_allow_ad_user_data: regionalCasConsent ? 'eu_consent_policy' : false,
+        google_analytics_default_allow_ad_personalization_signals: regionalCasConsent ? 'eu_consent_policy' : false })) {
+        const tag = [...source.matchAll(/<meta-data\b[^>]*>/g)].map(([tag]) => tag).find(tag => tag.includes(`android:name="${key}"`));
+        check(tag?.includes(`android:value="${value}"`), `CAS Android Analytics: ${key} must be ${value}.`);
+      }
+      const namespace = appGradle.match(/\bnamespace\s*=?\s*['"]([^'"]+)['"]/)?.[1]
+        ?? appGradle.match(/\bapplicationId\s*=?\s*['"]([^'"]+)['"]/)?.[1];
+      const application = source.match(/<application\b[^>]*android:name="([^"]+)"/)?.[1];
+      const className = application?.startsWith('.') ? namespace + application : application;
+      const startup = className ? code(read(`android/app/src/main/java/${className.replaceAll('.', '/')}.java`)) : '';
+      check(/\bonCreate\s*\(\)\s*\{[\s\S]*setAnalyticsCollectionEnabled\(true\)/.test(startup),
+        'CAS Android Analytics: registered Application must enable collection independently of CAS before WebView startup.');
+      check(appGradle.includes('com.google.firebase:firebase-analytics:$firebaseAnalyticsVersion'),
+        'CAS Android Analytics: Application needs the pinned Firebase Analytics dependency.');
     }
     if (consent) {
       const namespace = appGradle.match(/\bnamespace\s*=?\s*['"]([^'"]+)['"]/)?.[1]
@@ -192,6 +256,21 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       const expectedVersion = json(`node_modules/${name}/package.json`).version;
       check(new RegExp(`^  - ${pod} \\(${escape(expectedVersion)}\\)`, 'm').test(podLock), `iOS: ${pod} missing or stale in Podfile.lock.`);
       check(registry.packageClassList?.includes(className), `iOS: ${className} missing from generated Capacitor registration; sync iOS.`);
+    }
+    if (cas) {
+      check(!/CapacitorCommunityAdmob|CapacitorPluginYandexAds/.test(podfile + podLock), 'CAS iOS: legacy native bridge pods must be absent.');
+      check(new RegExp(`^  - CleverAdsSolutions-Base \\(${escape(manifest.advertising.cas.sdkVersion)}\\)`, 'm').test(podLock), 'CAS iOS: resolved SDK must match the pinned CAS version.');
+      check(podfile.includes('github.com/cleveradssolutions/CAS-Specs') && new RegExp(`pod ['"]CleverAdsSolutions-SDK/Optimal['"], ['"]${escape(manifest.advertising.cas.sdkVersion)}['"]`).test(podfile), 'CAS iOS: pin Optimal SDK with the CAS Specs source.');
+      const info = plist('ios/App/App/Info.plist');
+      for (const [key, value] of Object.entries({ FIREBASE_ANALYTICS_COLLECTION_ENABLED: true,
+        GOOGLE_ANALYTICS_TCF_DATA_ENABLED: true, GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_STORAGE: regionalCasConsent,
+        GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_USER_DATA: regionalCasConsent ? 'eu_consent_policy' : false,
+        GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS: regionalCasConsent ? 'eu_consent_policy' : false })) {
+        check(info[key] === value, `CAS iOS Analytics: ${key} must be ${value}.`);
+      }
+      const delegate = code(read('ios/App/App/AppDelegate.swift'));
+      check(/FirebaseApp\.configure\(\)\s*Analytics\.setAnalyticsCollectionEnabled\(true\)/.test(delegate),
+        'CAS iOS Analytics: enable collection independently of CAS after Firebase configuration and before WebView startup.');
     }
     const project = plist('ios/App/App.xcodeproj/project.pbxproj');
     const objects = project.objects ?? {};
@@ -267,7 +346,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     }
   }
 
-  if (targets.some((target) => target !== 'web')) {
+  if (!cas && targets.some((target) => target !== 'web')) {
     const runner = 'scripts/patch-native-ad-events.mjs';
     if (read(runner)) {
       const result = run(process.execPath, [runner, '--check'], { cwd: root, encoding: 'utf8' });

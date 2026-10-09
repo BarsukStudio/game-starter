@@ -1,3 +1,4 @@
+import { beginConsentTelemetry } from './consent-telemetry.js';
 import { withAdAttemptScopes } from '@barsuk/game-runtime/ad-attempt-scope';
 import {
   AD_LATE_REWARD_GRACE_MS,
@@ -311,7 +312,11 @@ export async function initializePlatformServices(callbacks) {
   // or lower an entitlement while SDK listeners from the first boot still live.
   if (!platformInitialization) {
     adsInitializing = true;
-    platformInitialization = initializeAds(callbacks).finally(() => { adsInitializing = false; });
+    platformInitialization = initializeAds(callbacks).finally(() => {
+      adsInitializing = false;
+      if (admobRecoveryRequested) recoverAdmobOnResume();
+      if (yandexRecoveryRequested) recoverYandexOnResume();
+    });
   }
   return platformInitialization;
 }
@@ -328,8 +333,10 @@ export async function showPrivacyOptions() {
   if (!options.available || options.busy
     || nativeAdmob.hasPresentation() || nativeYandex.hasPresentation()) return false;
   privacyOpen = true;
+  const finishTelemetry = beginConsentTelemetry('privacy');
+  let stage = 'ads_cleanup';
   // Old preloaded ads must never be shown after choices change. The game saves
-  // first and reloads after success, so both SDKs prepare fresh ads at startup.
+  // first. Retire Yandex native loads explicitly: they survive a WebView reload.
   state.privacyAdsStopped = true;
   try {
     let cleanupTimer;
@@ -348,14 +355,79 @@ export async function showPrivacyOptions() {
     } finally {
       clearTimeout(cleanupTimer);
     }
+    stage = 'privacy_form';
     await nativeAdmob.showNativePrivacyOptions();
+    finishTelemetry({ stage });
     return true;
   } catch (error) {
+    finishTelemetry({ stage, failed: true, error });
     console.warn('Privacy options failed; ads stay stopped until restart.', error);
     return false;
   } finally {
     privacyOpen = false;
   }
+}
+
+let admobRecoveryBound = false;
+let admobRecoveryRequested = false;
+let recoverAdmobOnResume = () => {};
+function bindAdmobRecovery() {
+  if (admobRecoveryBound) return;
+  admobRecoveryBound = true;
+  const recover = () => {
+    if (document.visibilityState === 'hidden' || privacyOpen || state.privacyAdsStopped) return;
+    if (adsInitializing) {
+      admobRecoveryRequested = true;
+      return;
+    }
+    admobRecoveryRequested = false;
+    if (!nativeAdmob.canRetryInitialization()) return;
+    adsInitializing = true;
+    state.provider = 'admob-native';
+    void nativeAdmob.init(createAdAdapterDeps()).then(ready => {
+      if (!ready) state.provider = 'none';
+    }).catch(error => {
+      state.provider = 'none';
+      console.warn('AdMob recovery failed', error);
+    }).finally(() => {
+      adsInitializing = false;
+      if (admobRecoveryRequested) recoverAdmobOnResume();
+    });
+  };
+  recoverAdmobOnResume = recover;
+  window.addEventListener('online', recover);
+  document.addEventListener('visibilitychange', recover);
+}
+
+let yandexRecoveryBound = false;
+let yandexRecoveryRequested = false;
+let recoverYandexOnResume = () => {};
+function bindYandexRecovery() {
+  if (yandexRecoveryBound) return;
+  yandexRecoveryBound = true;
+  const recover = () => {
+    if (document.visibilityState === 'hidden' || privacyOpen || state.privacyAdsStopped) return;
+    if (adsInitializing) {
+      yandexRecoveryRequested = true;
+      return;
+    }
+    yandexRecoveryRequested = false;
+    if (!nativeYandex.canRetryInitialization()) return;
+    adsInitializing = true;
+    state.provider = 'yandex-native';
+    void nativeYandex.init(createAdAdapterDeps()).then(ready => {
+      if (!ready) state.provider = 'none';
+    }).catch(error => {
+      state.provider = 'none';
+      console.warn('Yandex recovery failed', error);
+    }).finally(() => {
+      adsInitializing = false;
+      if (yandexRecoveryRequested) recoverYandexOnResume();
+    });
+  };
+  recoverYandexOnResume = recover;
+  window.addEventListener('online', recover);
+  document.addEventListener('visibilitychange', recover);
 }
 
 async function initializeAds(callbacks) {
@@ -373,18 +445,17 @@ async function initializeAds(callbacks) {
       // Set before the adapter runs, exactly where the adapter used to set it
       // itself: the preloads it starts dispatch on this value.
       state.provider = 'yandex-native';
+      bindYandexRecovery();
       if (await nativeYandex.init(createAdAdapterDeps())) return;
       state.provider = 'none';
-      // A forced debug provider must fail visibly instead of silently testing
-      // a different SDK. Automatic locale routing keeps its production fallback.
-      if (selection.source === 'debug') return;
-      state.providerSource = 'locale-fallback';
+      return;
     }
     // Set before the adapter runs, exactly where the adapter used to set it
     // itself: the preload it starts mid-init dispatches on this value. Not
     // wrapped in a try/catch — a listener registration that throws stays
     // thrown, as it does today.
     state.provider = 'admob-native';
+    bindAdmobRecovery();
     if (!await nativeAdmob.init(createAdAdapterDeps())) state.provider = 'none';
     return;
   }
@@ -443,6 +514,10 @@ export function supportsRestorePurchases() {
 
 export function verifyPurchaseTransaction(transaction) {
   return cdvPurchase.verifyTransaction(transaction);
+}
+
+export function describePurchaseTransaction(transaction) {
+  return cdvPurchase.describeTransaction(transaction);
 }
 
 export function getPurchasePrices() {
@@ -649,7 +724,14 @@ export async function requestRating() {
 // handler bag is passed straight through: omitting it here leaves the
 // destructuring default over there the one that applies.
 export async function bindNativeLifecycle(handlers) {
-  return nativeShell.bindNativeLifecycle(handlers);
+  return nativeShell.bindNativeLifecycle({
+    ...handlers,
+    onResume: reason => {
+      handlers.onResume?.(reason);
+      recoverAdmobOnResume();
+      recoverYandexOnResume();
+    },
+  });
 }
 
 export async function exitNativeApp() {

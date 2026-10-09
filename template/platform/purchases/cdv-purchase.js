@@ -493,3 +493,12 @@ async function finishServiceTransactions(sourceReceipt) {
     }
   }
 }
+
+// The game reads plain delivery identity, never fields on an opaque SDK handle.
+export function describeTransaction(transaction) {
+  return {
+    productId: getTransactionProductId(transaction),
+    transactionId: getTransactionDeliveryId(transaction),
+    pending: transaction?.isPending === true,
+  };
+}

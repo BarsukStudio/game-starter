@@ -6,27 +6,30 @@ import { randomUUID } from 'node:crypto';
 
 const clean = source => source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '');
 const read = file => fs.readFileSync(new URL(`../src/js/platform/ads/${file}.js`, import.meta.url), 'utf8');
-for (const provider of ['admob', 'yandex']) {
-  test(`${provider}: actual adapter SDK bindings reach the actual collector for all formats`, async () => {
+for (const platform of ['android', 'ios']) for (const provider of ['admob', 'yandex']) {
+  test(`${platform} ${provider}: actual adapter SDK bindings reach the actual collector for all formats`, async () => {
     const listeners = new Map(), logged = [];
     const sdk = {
-      initialize: async () => {}, setUserConsent: async () => {},
+      resetAds: async () => {}, initialize: async () => {}, setUserConsent: async () => {},
       requestConsentInfo: async () => ({ canRequestAds: true }),
+      trackingAuthorizationStatus: async () => ({ status: 'denied' }),
       addListener: async (name, callback) => {
         if (!listeners.has(name)) listeners.set(name, []);
         listeners.get(name).push(callback);
         return { remove() {} };
       },
     };
-    const common = { isNative: true, nativePlatform: 'android', crypto: { randomUUID }, console,
+    const common = { isNative: true, nativePlatform: platform, crypto: { randomUUID }, console,
       FirebaseAnalytics: { logEvent: async event => logged.push(event) } };
     const collector = vm.createContext(common);
+    const idSource = fs.readFileSync(new URL('../src/js/platform/request-id.js', import.meta.url), 'utf8');
+    vm.runInContext(clean(idSource), collector);
     vm.runInContext(clean(read('ad-revenue')), collector);
     const events = prefix => ({ AdImpression: `${prefix}Paid`, AdPaid: `${prefix}Paid`, Showed: `${prefix}Showed`, FailedToShow: `${prefix}Failed`, Dismissed: `${prefix}Dismissed` });
     const adapter = vm.createContext({ ...common, sdk, AdMob: sdk,
       bindAdRevenueEvents: collector.bindAdRevenueEvents,
-      APP_CONFIG: { ads: { nativeTestMode: false, admob: { android: {}, testingDevices: [] }, yandex: { android: {} } } },
-      getNativeKey: () => 'android', debugLog() {},
+      APP_CONFIG: { ads: { nativeTestMode: false, admob: { [platform]: {}, testingDevices: [] }, yandex: { [platform]: {} } } },
+      getNativeKey: () => platform, debugLog() {},
       createBannerTelemetry: () => ({ stop() {} }),
       beginConsentTelemetry: () => () => {}, recordConsentAttempt() {},
       readConsentSignals: async () => ({}), hasYandexConsent: () => false,
