@@ -79,7 +79,8 @@
   },
   "acceptedPins": {
     "@barsuk/game-runtime": [
-      "https://github.com/BarsukStudio/game-runtime/archive/39aba0d9fd437337d513904165c14c9debf56536.tar.gz"
+      "https://github.com/BarsukStudio/game-runtime/archive/39aba0d9fd437337d513904165c14c9debf56536.tar.gz",
+      "https://github.com/BarsukStudio/game-runtime/archive/4fc89e2a30a94abbf25e0834460c9f6b0eee8489.tar.gz"
     ],
     "capacitor-plugin-cdv-purchase": [
       "file:vendor/capacitor-plugin-cdv-purchase-13.18.0-barsuk.1.tgz"

@@ -241,17 +241,19 @@ test('CAS rejects mixed stacks, SDK drift and collector drift', (t) => {
   for (const expected of ['legacy plugin', 'gradle-plugin:4.8.0', 'CAS iOS', 'collector differs']) assert.ok(errors.includes(expected), errors);
 });
 
-test('the reviewed runtime source pin is accepted, unrelated commits remain rejected', (t) => {
-  const app = fixture(t);
-  const name = '@barsuk/game-runtime';
-  const pkg = app.read('package.json'); const lock = app.read('package-lock.json');
-  pkg.dependencies[name] = manifest.acceptedPins[name][0];
-  lock.packages[''] = pkg; lock.packages[`node_modules/${name}`].resolved = pkg.dependencies[name];
-  app.write('package.json', pkg); app.write('package-lock.json', lock); app.write('node_modules/.package-lock.json', lock);
-  assert.deepEqual(app.verify().errors, []);
-  pkg.dependencies[name] = pkg.dependencies[name].replace('39aba0d', '0000000'); app.write('package.json', pkg);
-  assert.ok(app.verify().errors.some(error => error.includes('dependencies must pin')));
-});
+for (const pin of manifest.acceptedPins['@barsuk/game-runtime']) {
+  test(`reviewed runtime source pin ${pin} is accepted, unrelated commits remain rejected`, (t) => {
+    const app = fixture(t);
+    const name = '@barsuk/game-runtime';
+    const pkg = app.read('package.json'); const lock = app.read('package-lock.json');
+    pkg.dependencies[name] = pin;
+    lock.packages[''] = pkg; lock.packages[`node_modules/${name}`].resolved = pkg.dependencies[name];
+    app.write('package.json', pkg); app.write('package-lock.json', lock); app.write('node_modules/.package-lock.json', lock);
+    assert.deepEqual(app.verify().errors, []);
+    pkg.dependencies[name] = pin.replace(/archive\/[a-f0-9]{40}/, `archive/${'0'.repeat(40)}`); app.write('package.json', pkg);
+    assert.ok(app.verify().errors.some(error => error.includes('dependencies must pin')));
+  });
+}
 
 test('complete baseline passes with installed metadata and both native targets', (t) => {
   assert.deepEqual(fixture(t).verify().errors, []);

@@ -484,7 +484,8 @@ The `admob` template selection preserves the existing two-provider routing.
 
 Use the CAS package pins and reviewed local archive integrity in
 `template/plugins-manifest.json`; the runtime baseline is 0.2.2 as a reviewed local archive. The older reviewed
-source commit remains accepted for attempt-driven providers; CAS requires
+source commit and the published 0.2.2 revision remain accepted through the
+manifest's `acceptedPins`; CAS requires
 `setAvailability` and rejects a runtime without it. Consumers retain their
 existing pins until explicitly migrated. CAS telemetry requires Firebase Analytics.
 

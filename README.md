@@ -9,7 +9,10 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.6.0**; package: **0.1.0-alpha.22** (local candidate).
+Current contract: **0.6.0**; package: **0.1.0-alpha.23**.
+Alpha.23 accepts the published runtime 0.2.2 source revision in native plugin
+verification. Exact accepted pins remain owned by `template/plugins-manifest.json`;
+other SDK, revenue and native registration checks are unchanged.
 Contract 0.6 defines refusal semantics in `contract/manifest.js` and runs the same
 ad cases in `portal-ads`, `native-admob-ads` and `native-yandex-ads`. Native fixtures
 must retain the real controller and adapters; `testing/native-ads.mjs` provides
