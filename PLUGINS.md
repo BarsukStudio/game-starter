@@ -300,3 +300,16 @@ with `--verify` to execute them; without it Passport only records metadata.
   reports, readable stacks and `js_bootstrap` in the correct Firebase app.
 - Record versions, platforms, evidence and remaining gates in the game's status
   document. Keep account IDs, store state and device results out of this shared guide.
+
+## CAS-only consumers
+
+The config schema accepts `ads.nativeStack: 'cas'`, explicit `ads.cas.audience`,
+and `ads.cas.android.casId` / `ads.cas.ios.casId`. Legacy AdMob/Yandex configuration
+and provider-switch storage keys are not required in this mode. The contract API
+is unchanged; web portal adapters remain independent.
+
+The verifier recognizes the CAS dependency and checks its versioned local `.tgz`,
+lock/installed integrity, native registration, absence of legacy bridges and the
+custom CAS revenue binding. SDK/adapters use the version in `advertising.cas` in
+the manifest. Production account readiness and standard Firebase event ownership
+remain separate acceptance. Full CAS template generation is not included.

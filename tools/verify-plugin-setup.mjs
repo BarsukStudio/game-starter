@@ -62,6 +62,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, run = sp
   }
 
   const pkg = json('package.json');
+  const cas = Boolean(pkg.dependencies?.['@barsuk/capacitor-cas']);
   const lock = json('package-lock.json');
   const installedLock = json('node_modules/.package-lock.json');
   const declared = { ...pkg.dependencies, ...pkg.devDependencies };
@@ -70,19 +71,38 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, run = sp
   if (diagnostics) groups.push(manifest.diagnostics);
   for (const section of ['dependencies', 'devDependencies']) {
     const expected = Object.assign({}, ...groups.map((group) => group[section]));
+    if (cas) {
+      delete expected['@capacitor-community/admob'];
+      delete expected['capacitor-plugin-yandex-ads'];
+      if (section === 'dependencies') {
+        expected['@barsuk/capacitor-cas'] = pkg.dependencies['@barsuk/capacitor-cas'];
+      }
+    }
     for (const [name, version] of Object.entries(expected)) {
       const key = `node_modules/${name}`;
       const entry = lock.packages?.[key];
       const installed = installedLock.packages?.[key];
       const actual = json(`${key}/package.json`);
+      if (cas && name === '@barsuk/capacitor-cas') check(version.startsWith('file:') && version.endsWith('.tgz') && actual.version === manifest.advertising.cas.version, 'CAS: expected pinned versioned local archive.');
       check(pkg[section]?.[name] === version, `${name}: ${section} must pin ${version}; found ${pkg[section]?.[name] ?? 'missing'}.`);
       check(lock.packages?.['']?.[section]?.[name] === version, `${name}: root lockfile pin differs from the baseline.`);
-      check(version.startsWith('https:') ? entry?.resolved === version : entry?.version === version, `${name}: resolved lockfile entry differs from the baseline.`);
+      check((version.startsWith('https:') || version.startsWith('file:')) ? entry?.resolved === version : entry?.version === version, `${name}: resolved lockfile entry differs from the baseline.`);
       check(Boolean(entry?.integrity) && installed?.integrity === entry.integrity && installed?.resolved === entry.resolved
         && installed?.version === entry.version && actual.version === entry.version, `${name}: installed metadata differs from package-lock.json; reinstall the declared dependencies.`);
     }
   }
   const plugins = { ...nativePlugins, ...(diagnostics ? firebasePlugins : {}) };
+  if (cas) {
+    for (const name of ['@capacitor-community/admob', 'capacitor-plugin-yandex-ads']) {
+      delete plugins[name];
+      check(!declared[name] && !lock.packages?.[`node_modules/${name}`], `CAS: legacy plugin ${name} must be absent.`);
+    }
+    plugins['@barsuk/capacitor-cas'] = ['BarsukCapacitorCas', 'CASAdsPlugin'];
+    const adapter = code(read('src/js/platform/ads/native-cas.js'));
+    check(adapter.includes('@barsuk/capacitor-cas') && adapter.includes("'adEvent'"), 'CAS: adapter must bind native ad events.');
+    const revenue = code(read('src/js/platform/ads/ad-revenue.js'));
+    check(revenue.includes("'bs_ad_revenue'") && revenue.includes("'cas'") && !/name:\s*['"]ad_impression['"]/.test(revenue), 'CAS: custom revenue must identify CAS and must not duplicate standard ad_impression.');
+  }
   if (diagnostics) {
     read('src/js/platform/diagnostics.js');
     const controller = code(read('src/js/platform/index.js'));
@@ -183,7 +203,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, run = sp
     }
   }
 
-  if (targets.some((target) => target !== 'web')) {
+  if (!cas && targets.some((target) => target !== 'web')) {
     const runner = 'scripts/patch-native-ad-events.mjs';
     if (read(runner)) {
       const result = run(process.execPath, [runner, '--check'], { cwd: root, encoding: 'utf8' });

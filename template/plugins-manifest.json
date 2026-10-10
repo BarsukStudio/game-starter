@@ -48,5 +48,6 @@
       "firebasePerfVersion": "22.0.6"
     },
     "iosSdkVersion": "12.19.0"
-  }
+  },
+  "advertising": { "cas": { "version": "0.1.2", "sdkVersion": "4.8.0" } }
 }

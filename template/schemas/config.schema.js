@@ -108,9 +108,11 @@ export function validateConsumerConfig(config) {
 
   if (checkRecord(problems, 'config.platform', config.platform)) {
     checkString(problems, 'config.platform.runtimeTargetGlobal', config.platform.runtimeTargetGlobal);
-    checkString(problems, 'config.platform.debugAdsProviderKey', config.platform.debugAdsProviderKey);
+    if (config.ads?.nativeStack !== 'cas') checkString(problems, 'config.platform.debugAdsProviderKey', config.platform.debugAdsProviderKey);
     const legacy = config.platform.legacyAdsProviderKeys;
-    if (!Array.isArray(legacy)) {
+    if (config.ads?.nativeStack === 'cas' && legacy === undefined) {
+      // CAS-only consumers have no provider override storage.
+    } else if (!Array.isArray(legacy)) {
       fail(problems, 'config.platform.legacyAdsProviderKeys', 'an array', legacy);
     } else {
       legacy.forEach((key, index) => {
@@ -129,6 +131,20 @@ export function validateConsumerConfig(config) {
 
   if (checkRecord(problems, 'config.ads', config.ads)) {
     checkBoolean(problems, 'config.ads.nativeTestMode', config.ads.nativeTestMode);
+    if (config.ads.nativeStack === 'cas') {
+      if ('admob' in config.ads || 'yandex' in config.ads) problems.push('config.ads: CAS cannot include legacy native provider config');
+      if (checkRecord(problems, 'config.ads.cas', config.ads.cas)) {
+        if (!['children', 'notChildren', 'undefined'].includes(config.ads.cas.audience)) {
+          problems.push('config.ads.cas.audience: expected an explicit CAS audience');
+        }
+        for (const key of STORE_KEYS) {
+          if (checkRecord(problems, `config.ads.cas.${key}`, config.ads.cas[key])) {
+            checkString(problems, `config.ads.cas.${key}.casId`, config.ads.cas[key].casId);
+          }
+        }
+      }
+    } else {
+      if (config.ads.nativeStack !== undefined && config.ads.nativeStack !== 'admob') problems.push('config.ads.nativeStack: unsupported native stack');
     if (checkRecord(problems, 'config.ads.admob', config.ads.admob)) {
       const admob = config.ads.admob;
       if (!Array.isArray(admob.testingDevices)) {
@@ -154,6 +170,7 @@ export function validateConsumerConfig(config) {
       for (const key of ['test', ...STORE_KEYS]) {
         checkAdUnits(problems, `config.ads.yandex.${key}`, config.ads.yandex[key]);
       }
+    }
     }
   }
 

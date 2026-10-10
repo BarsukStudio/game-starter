@@ -230,3 +230,34 @@ test('the distributable carries the guide, reference versions and executable ver
   const files = JSON.parse(result.stdout)[0].files.map((file) => file.path);
   for (const file of ['PLUGINS.md', 'tools/verify-plugin-setup.mjs', 'template/plugins-manifest.json', 'template/platform/diagnostics.js']) assert.ok(files.includes(file), file);
 });
+
+function casFixture(t) {
+  const f = fixture(t); const pkg = f.read('package.json'); const lock = f.read('package-lock.json');
+  for (const name of ['@capacitor-community/admob', 'capacitor-plugin-yandex-ads']) {
+    delete pkg.dependencies[name]; delete lock.packages[`node_modules/${name}`];
+  }
+  const name = '@barsuk/capacitor-cas'; const pin = 'file:vendor/cas-0.1.2.tgz';
+  pkg.dependencies[name] = pin; lock.packages[''] = pkg;
+  lock.packages[`node_modules/${name}`] = {version:'0.1.2',resolved:pin,integrity:'fixture-cas'};
+  f.write('package.json',pkg); f.write('package-lock.json',lock); f.write('node_modules/.package-lock.json',lock);
+  f.write(`node_modules/${name}/package.json`,{name,version:'0.1.2'});
+  f.write('src/js/platform/ads/native-cas.js', "import {CAS} from '@barsuk/capacitor-cas'; CAS.addListener('adEvent', handler);");
+  f.write('src/js/platform/ads/ad-revenue.js', "logEvent({name:'bs_ad_revenue', ad_provider:'cas'});");
+  return f;
+}
+test('CAS local archive resolves by pin and preserves existing contract checks', t => {
+  const f = casFixture(t); assert.deepEqual(f.verify({targets:['web']}).errors, []);
+});
+test('CAS rejects mixed legacy dependencies and duplicate standard revenue sender', t => {
+  const f = casFixture(t); const pkg = f.read('package.json');
+  pkg.dependencies['@capacitor-community/admob'] = '8.1.0'; f.write('package.json',pkg);
+  f.write('src/js/platform/ads/ad-revenue.js', "logEvent({name:'ad_impression', ad_provider:'cas'});");
+  const errors = f.verify({targets:['web']}).errors.join(' ');
+  assert.match(errors,/legacy plugin/); assert.match(errors,/must not duplicate/);
+});
+
+test('CAS cannot bypass or omit the pinned runtime', t => {
+  const f = casFixture(t); const pkg = f.read('package.json');
+  delete pkg.dependencies['@barsuk/game-runtime']; f.write('package.json',pkg);
+  assert.ok(f.verify({targets:['web']}).errors.some(e => e.includes('@barsuk/game-runtime') && e.includes('must pin')));
+});
