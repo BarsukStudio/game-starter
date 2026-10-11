@@ -285,6 +285,15 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       const parent = projectConfigs.map((key) => objects[key]).find((entry) => entry.name === config?.name);
       return { ...parent?.buildSettings, ...config?.buildSettings };
     });
+    // Xcode autolinks SwiftUICore, which exists only on iOS 18+. Supported older
+    // systems abort at launch unless the App weak-links it; migrations drop it.
+    // `[arch=*]` is the unconditional setting written by Xcode's per-arch editor.
+    const weakSwiftUICore = (config) => ['OTHER_LDFLAGS', 'OTHER_LDFLAGS[arch=*]'].some((key) => {
+      const flags = Array.isArray(config[key]) ? config[key] : String(config[key] ?? '').split(/\s+/);
+      return flags.some((flag, index) => flag === '-weak_framework' && flags[index + 1] === 'SwiftUICore');
+    });
+    check(settings.length > 0 && settings.every(weakSwiftUICore),
+      `iOS: every App configuration must weak-link SwiftUICore (OTHER_LDFLAGS -weak_framework SwiftUICore) for iOS ${manifest.ios.deploymentTarget}-17.`);
     const phases = (app?.buildPhases ?? []).map((id) => objects[id]);
     if (consent) {
       const included = (kind, name) => phases.some((phase) => phase?.isa === kind && phase.files?.some((id) => {

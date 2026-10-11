@@ -169,6 +169,30 @@ export const cases = [
     },
   },
   {
+    // The other half of the same rule: a presented ad that ends without the SDK
+    // ever confirming a reward pays nothing. Ended by the dismissal watchdog
+    // rather than a provider dismissal, because not every provider has a
+    // "closed early" signal a fixture can drive, while the watchdog ends a
+    // presented show the same way everywhere.
+    name: 'rewarded-closed-without-confirmation-pays-nothing',
+    environment: 'portal-ads',
+    async run(harness) {
+      const { controller, names } = await started(harness);
+      controller.preloadRewardedAd();
+      await reachSdk();
+      startShow(controller.showRewardedAd());
+      await reachSdk();
+      harness.controls.ads.rewarded.present();
+      harness.controls.clock.runAll();
+      await reachSdk();
+
+      const rewarded = only(names(), 'Rewarded');
+      assert.equal(count(rewarded, 'onRewardedShown'), 1);
+      assert.equal(count(rewarded, 'onRewardedClosed'), 1, 'a presented show still ends');
+      assert.equal(count(rewarded, 'onRewardedComplete'), 0, 'an unconfirmed view pays nothing');
+    },
+  },
+  {
     name: 'late-or-repeated-sdk-signals-do-not-duplicate-a-callback',
     environment: 'portal-ads',
     async run(harness) {
@@ -246,6 +270,7 @@ cases.push({
     await reachSdk();
     const closed = count(names(), 'onRewardedClosed');
     assert.equal(closed, 1);
+    assert.equal(confirmations, 0, 'closing the UI is not a confirmed view');
     harness.controls.ads.rewarded.complete();
     harness.controls.ads.rewarded.complete();
     await reachSdk();
@@ -322,6 +347,35 @@ export const nativeCases = ['native-admob-ads', 'native-yandex-ads'].flatMap(env
       assert.equal(harness.controls.ads.showCount(), calls + 1, 'native terminal event releases the reservation');
       harness.controls.ads[other].complete();
       await reachSdk();
+    },
+  })),
+  // The provider's own dismissal of an unrewarded view, through both reward
+  // paths. Only the native environments can drive it: the SDK stand-ins in
+  // `testing/native-ads.mjs` dismiss without a reward, while a portal SDK may
+  // have no such signal. The clock runs afterwards for a grace window that may
+  // still be waiting for a late reward.
+  ...['legacy', 'bound'].map(path => ({
+    name: `${environment}: ${path} rewarded dismissed without a reward pays nothing`,
+    environment,
+    async run(harness) {
+      const { controller, names } = await started(harness);
+      let confirmations = 0;
+      controller.preloadRewardedAd();
+      await reachSdk();
+      startShow(path === 'bound'
+        ? controller.showRewardedAd(() => { confirmations++; })
+        : controller.showRewardedAd());
+      await reachSdk();
+      harness.controls.ads.rewarded.present();
+      harness.controls.ads.rewarded.dismiss();
+      await reachSdk();
+      harness.controls.clock.runAll();
+      await reachSdk();
+
+      const rewarded = only(names(), 'Rewarded');
+      assert.equal(count(rewarded, 'onRewardedClosed'), 1, 'a dismissed show ends once');
+      assert.equal(count(rewarded, 'onRewardedComplete'), 0, 'a dismissed view pays nothing');
+      assert.equal(confirmations, 0, 'a dismissed view confirms nothing');
     },
   })),
 ]);

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { cases } from '../contract/cases/ads.mjs';
 
-function harness({ deferred, rewardCount = 1, close = true }) {
+function harness({ deferred, rewardCount = 1, close = true, payOnClose = false }) {
   let callbacks;
   let confirmed;
   let completed = false;
@@ -16,6 +16,10 @@ function harness({ deferred, rewardCount = 1, close = true }) {
   const finishUI = () => {
     if (closed || !close) return;
     closed = true;
+    if (payOnClose && !completed) {
+      if (confirmed) confirmed();
+      else callbacks.onRewardedComplete();
+    }
     callbacks.onRewardedClosed();
   };
   return {
@@ -50,6 +54,7 @@ for (const deferred of [false, true]) {
     'rewarded-success-reports-shown-then-closed',
     'rewarded-completes-at-most-once-per-show',
     'bound-reward-survives-ui-timeout-and-is-confirmed-once',
+    'rewarded-closed-without-confirmation-pays-nothing',
   ]) {
     test(`${name} accepts ${deferred ? 'Promise-driven' : 'synchronous'} callbacks`, async () => {
       await cases.find(c => c.name === name).run(harness({ deferred }));
@@ -64,5 +69,16 @@ for (const deferred of [false, true]) {
   test(`terminal assertions still reject a missing close (deferred=${deferred})`, async () => {
     const testCase = cases.find(c => c.name === 'rewarded-success-reports-shown-then-closed');
     await assert.rejects(testCase.run(harness({ deferred, close: false })), { code: 'ERR_ASSERTION' });
+  });
+  test(`close assertions still reject a reward paid on close (deferred=${deferred})`, async () => {
+    const testCase = cases.find(c => c.name === 'rewarded-closed-without-confirmation-pays-nothing');
+    await assert.rejects(testCase.run(harness({ deferred, payOnClose: true })), { code: 'ERR_ASSERTION' });
+  });
+  test(`bound assertions still reject a confirmation paid on close (deferred=${deferred})`, async () => {
+    const testCase = cases.find(c => c.name === 'bound-reward-survives-ui-timeout-and-is-confirmed-once');
+    await assert.rejects(
+      testCase.run(harness({ deferred, payOnClose: true })),
+      { code: 'ERR_ASSERTION', message: /closing the UI is not a confirmed view/ },
+    );
   });
 }

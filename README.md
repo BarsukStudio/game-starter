@@ -9,7 +9,24 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.6.0**; package: **0.1.0-alpha.23**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.24**.
+Contract 0.7 documents that `finishPurchaseTransaction` resolves only on the
+store's settlement, never on dispatch; a rejection means settlement was not
+confirmed, so the delivery record stays and nothing is granted again. Two
+native-store cases check it: a dispatched finish stays open until the store
+settles it, and one the store never settles ends as a rejection. Native-store
+fixtures now need `store.settleFinished(productId)`, the store's own report that
+the most recently finished transaction for that product is closed. It also adds
+the cases that a rewarded ad ended without a confirmed reward pays nothing —
+by watchdog, through a bound callback, and, in both native environments, by the
+provider's own dismissal on the legacy and bound paths. Native fixtures now need
+`ads.rewarded.dismiss()`; `testing/native-ads.mjs` provides it. Alpha.24
+also lets the template's production-ads release gate read the config markers in
+both the declared and the bundler-inlined form, retries a template Yandex banner
+whose load failed (the SDK refreshes only a loaded banner), and makes the plugin
+verifier require `-weak_framework SwiftUICore` in every iOS App configuration.
+Native plugin verification also accepts the published runtime 0.3.0 source
+revision, which adds `purchase-restore-session`.
 Alpha.23 accepts the published runtime 0.2.2 source revision in native plugin
 verification. Exact accepted pins remain owned by `template/plugins-manifest.json`;
 other SDK, revenue and native registration checks are unchanged.

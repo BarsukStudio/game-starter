@@ -33,7 +33,7 @@ for (const format of ['interstitial', 'rewarded']) for (const boundDismissal of 
     const rewritten = source.replace(/from '([^']+)'/g, (_, name) =>
       `from ${JSON.stringify(name === './native-ad-events.js' ? router : name === '../request-id.js' ? new URL('../template/platform/request-id.js', import.meta.url).href : stub)}`)
       .replace("import('capacitor-plugin-yandex-ads')", `import(${JSON.stringify(stub)})`);
-    const adapter = await import(url(rewritten));
+    const adapter = await import(url("const document = { visibilityState: 'visible', addEventListener() {} };\nconst window = { addEventListener() {} };\n" + rewritten));
     delete globalThis.__yandexPresentationTest;
     let current;
     const lifecycle = {
@@ -47,10 +47,10 @@ for (const format of ['interstitial', 'rewarded']) for (const boundDismissal of 
         return scope;
       },
     };
-    await adapter.init({ interstitial: lifecycle, rewarded: lifecycle,
+    assert.equal(await adapter.init({ interstitial: lifecycle, rewarded: lifecycle,
       isAdsRemoved: () => true, preloadRewarded() {},
       onPresentationSettled: () => events.push('available'),
-    });
+    }), true);
     const show = format === 'rewarded' ? 'showRewarded' : 'showInterstitial';
     const a = adapter[show](); const old = calls.at(-1);
     await assert.rejects(adapter.showInterstitial(), /has not settled/);

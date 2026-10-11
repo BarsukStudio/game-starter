@@ -24,7 +24,10 @@ const bundles = fs
 // silently stopped proving anything. Fail loudly instead, the same way
 // cap-sync-android.mjs fails on a moved anchor.
 const modeMatches = bundles.flatMap(({ file, source }) => {
-  return [...source.matchAll(/const nativeAdsMode = "([^"]*)"/g)].map((match) => ({
+  // A bundler may keep the declaration or inline it into the config object.
+  const namedMarker = /(?:const|var) nativeAdsMode = "([^"]*)"/g;
+  const inlinedMarker = /nativeAdsMode:\s*"([^"]*)"/g;
+  return [...source.matchAll(namedMarker), ...source.matchAll(inlinedMarker)].map((match) => ({
     file,
     mode: match[1],
   }));
@@ -49,7 +52,9 @@ if (mode !== 'production') {
 // keep receiving test traffic against the real ad units, so they must never
 // reach a store artifact.
 const deviceMatches = bundles.flatMap(({ file, source }) => {
-  return [...source.matchAll(/const admobTestingDevices = String\("([^"]*)"\)/g)].map((match) => ({
+  const namedMarker = /(?:const|var) admobTestingDevices = String\("([^"]*)"\)/g;
+  const inlinedMarker = /testingDevices:\s*String\("([^"]*)"\)\.split\("[,]"\)/g;
+  return [...source.matchAll(namedMarker), ...source.matchAll(inlinedMarker)].map((match) => ({
     file,
     ids: match[1],
   }));

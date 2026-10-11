@@ -137,7 +137,10 @@ For Android, merge `android.classpaths` and `android.variables` from the manifes
 The Kotlin plugin classpath is needed by the native ad stack. Keep root Gradle
 classpath injections in `BUILD_CONFIG.android.rootGradleClasspaths` as well.
 For iOS, set the Podfile deployment target from `ios.deploymentTarget`; align the
-App target deployment setting in Xcode. Native SDKs are registered by the sync in step 4.
+App target deployment setting in Xcode. Add `-weak_framework SwiftUICore` to the
+App target's `OTHER_LDFLAGS` in every configuration: Xcode links SwiftUICore,
+which exists only on iOS 18+, and without weak linking the app aborts at launch
+on older supported systems. Native SDKs are registered by the sync in step 4.
 
 Firebase Analytics also needs native app configuration: on Android apply Google
 Services and keep a matching `android/app/google-services.json`; on iOS bundle the

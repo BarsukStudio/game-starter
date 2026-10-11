@@ -20,7 +20,7 @@
 //
 // It does not become `1.0.0` before a second consumer has been through it —
 // step 6 may still find a breaking problem.
-export const CONTRACT_VERSION = '0.6.0';
+export const CONTRACT_VERSION = '0.7.0';
 
 // Every method `createPlatformController()` hands the game, and nothing else.
 // Sorted so a diff over this array is a diff over the contract rather than over
@@ -97,6 +97,12 @@ export const CAPABILITY_GROUPS = Object.freeze({
     'getPurchasePrices',
     'orderPurchase',
     'isPurchaseProductOwned',
+    // finishPurchaseTransaction(handle) resolves only once the store reports the
+    // transaction settled, never when the finish call was merely dispatched, and
+    // rejects when no confirmation arrives. A rejection means "settlement not
+    // confirmed", not "still open": the store may have settled it and the event
+    // been lost. A game finishes only after its delivery ledger recorded the
+    // grant, keeps that record on a rejection, and never grants again for it.
     'finishPurchaseTransaction',
     'isPurchaseTransportAvailable',
     'restorePurchases',

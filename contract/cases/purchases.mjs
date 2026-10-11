@@ -49,6 +49,33 @@ async function storeStarted({ createController, controls, skip }, { hold = false
   return { controller, store: controls.store, starting, ...recorder };
 }
 
+// Where a promise stands, read without awaiting it: awaiting would hang the case
+// on exactly the platform it exists to catch.
+function track(promise) {
+  const state = { outcome: 'pending' };
+  promise.then(() => { state.outcome = 'resolved'; }, () => { state.outcome = 'rejected'; });
+  return state;
+}
+
+// One approved purchase whose finish has reached the store and has not been
+// settled by it. `finishedFor()` proves the dispatch; settlement is the
+// fixture's separate `settleFinished(productId)`, the store's own report that
+// the transaction it was asked to finish is closed.
+async function finishDispatched(harness) {
+  const { controller, store, log } = await storeStarted(harness);
+  const productId = Object.values(controller.getPurchaseProducts())[0];
+  store.approve(productId);
+  const approved = log.filter(({ name }) => name === 'onTransactionApproved');
+  assert.equal(approved.length, 1);
+  const finishing = controller.finishPurchaseTransaction(approved[0].args[0]);
+  assert.equal(typeof finishing?.then, 'function', 'finishing answers a promise');
+  const finish = track(finishing);
+  await settle();
+  assert.deepEqual(store.finishedFor(), [productId], 'finishing reached the store');
+  assert.equal(finish.outcome, 'pending', 'a dispatched finish is not a settled purchase');
+  return { store, productId, finish };
+}
+
 export const cases = [
   {
     name: 'purchase-description-is-plain-data-without-a-store',
@@ -236,6 +263,34 @@ export const cases = [
 
       assert.deepEqual(store.verifiedFor(), [toVerify], 'verification reached exactly the purchase it named');
       assert.deepEqual(store.finishedFor(), [toFinish], 'and finishing reached the other one, unverified');
+    },
+  },
+  {
+    // The game records "delivered and closed" on this promise. A platform that
+    // resolved it when the finish call was merely dispatched would tell the
+    // game a purchase is closed while the store still holds it open.
+    name: 'finishing-resolves-on-the-store-settlement-not-on-dispatch',
+    environment: 'native-store',
+    async run(harness) {
+      const { store, productId, finish } = await finishDispatched(harness);
+      store.settleFinished(productId);
+      await settle();
+      assert.equal(finish.outcome, 'resolved', 'the store settling the purchase answers the finish');
+    },
+  },
+  {
+    // How long to wait is the platform's; that the wait ends is the contract.
+    // A rejection means "settlement not confirmed": the game keeps its delivery
+    // record and never grants again, so a quiet success would close a purchase
+    // the store never closed, and a promise left open would hold the game's
+    // delivery path forever.
+    name: 'finishing-without-the-store-settlement-rejects',
+    environment: 'native-store',
+    async run(harness) {
+      const { finish } = await finishDispatched(harness);
+      harness.controls.clock.runAll();
+      await settle();
+      assert.equal(finish.outcome, 'rejected', 'an unconfirmed finish ends as a rejection');
     },
   },
   {

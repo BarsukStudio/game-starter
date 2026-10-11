@@ -38,7 +38,7 @@ for (const platform of ['android', 'ios']) for (const provider of ['admob', 'yan
       AdmobConsentStatus: { REQUIRED: 'REQUIRED' },
       BannerAdPluginEvents: events('banner'), InterstitialAdPluginEvents: events('interstitial'), RewardAdPluginEvents: events('rewarded'),
       BannerAdSize: {}, BannerAdPosition: {},
-      document: { visibilityState: 'visible' },
+      document: { visibilityState: 'visible', addEventListener() {} }, window: { addEventListener() {} },
     });
     vm.runInContext(clean(read(`native-${provider}`)).replace(/import\('capacitor-plugin-yandex-ads'\)/, 'Promise.resolve({ YandexAds: sdk })'), adapter);
     assert.equal(await adapter.init({ isAdsRemoved: () => true, preloadInterstitial() {}, preloadRewarded() {}, interstitial: {}, rewarded: {} }), true);

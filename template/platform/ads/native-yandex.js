@@ -60,24 +60,95 @@ export function isPluginLoaded() {
   return listenersBound;
 }
 
-async function showBanner(YandexAds) {
-  if (deps.isAdsRemoved()) return false;
+// A failed load leaves an empty native view: the SDK refreshes only a banner
+// that has loaded (Android device QA 2026-10-10/11). Retry failed loads with the
+// AdMob budget: 5/10/20 s, then one new budget per foreground/online signal.
+let bannerWanted = false;
+let bannerFailed = false;
+let bannerRetryTimer = null;
+let bannerRetryCount = 0;
+let bannerRecoveryAfter = 0;
+let bannerAttempt = 0;
+
+function clearBannerRetry() {
+  if (bannerRetryTimer !== null) clearTimeout(bannerRetryTimer);
+  bannerRetryTimer = null;
+}
+
+function stopBannerRecovery() {
+  bannerTelemetry?.stop();
+  clearBannerRetry();
+  bannerWanted = false;
+  bannerFailed = false;
+  bannerRetryCount = 0;
+  bannerAttempt++;
+}
+
+function scheduleBannerRetry() {
+  if (!bannerWanted || !bannerFailed || deps.isAdsRemoved()
+    || document.visibilityState === 'hidden' || bannerRetryTimer !== null) return;
+  if (bannerRetryCount >= 3) {
+    bannerRecoveryAfter = performance.now() + 30000;
+    bannerTelemetry?.retryExhausted();
+    return;
+  }
+  bannerTelemetry?.retryScheduled(bannerRetryCount + 1, 5000 * (2 ** bannerRetryCount));
+  bannerRetryTimer = setTimeout(() => {
+    bannerRetryTimer = null;
+    if (!bannerWanted || deps.isAdsRemoved() || document.visibilityState === 'hidden') return;
+    bannerRetryCount++;
+    requestBanner();
+  }, 5000 * (2 ** bannerRetryCount));
+}
+
+function recoverBannerOnActivity() {
+  if (!bannerWanted || !bannerFailed || deps.isAdsRemoved()
+    || document.visibilityState === 'hidden' || bannerRetryTimer !== null) return;
+  if (bannerRetryCount >= 3) {
+    // A real lifecycle/network signal opens one new bounded budget. No polling.
+    const delay = Math.max(0, bannerRecoveryAfter - performance.now());
+    bannerRetryTimer = setTimeout(() => {
+      bannerRetryTimer = null;
+      if (!bannerWanted || deps.isAdsRemoved() || document.visibilityState === 'hidden') return;
+      bannerRetryCount = 0;
+      requestBanner();
+    }, delay);
+    return;
+  }
+  scheduleBannerRetry();
+}
+
+function requestBanner() {
+  if (!bannerWanted || deps.isAdsRemoved()) return;
+  if (document.visibilityState === 'hidden') {
+    bannerFailed = true;
+    return;
+  }
+  bannerFailed = false;
+  void showBanner(plugin.YandexAds, ++bannerAttempt);
+}
+
+async function showBanner(YandexAds, attempt) {
   const config = getConfig();
   try {
-    bannerTelemetry?.request();
+    bannerTelemetry?.request(bannerRetryCount);
     await YandexAds.showBanner({ adUnitId: config.banner });
+    if (attempt !== bannerAttempt) return;
     // Ownership can be restored while the native banner is loading. Remove it
     // immediately instead of leaving a paid owner with a visible banner.
     if (deps.isAdsRemoved()) {
-      bannerTelemetry?.stop();
+      stopBannerRecovery();
       await YandexAds.removeBanner();
-      return false;
+      return;
     }
-    return true;
+    bannerRetryCount = 0;
   } catch (error) {
+    // Removal, privacy reset and replacement reject the superseded load.
+    if (attempt !== bannerAttempt) return;
     bannerTelemetry?.failed(error, 'bridge_rejection');
     console.warn('YandexAds banner show failed', error);
-    return false;
+    bannerFailed = true;
+    scheduleBannerRetry();
   }
 }
 
@@ -202,6 +273,12 @@ async function initialize(injected) {
         ),
         YandexAds.addListener('bannerLoaded', () => {
           bannerTelemetry?.loaded();
+          // An SDK-side reload of a failed view also ends recovery.
+          if (bannerWanted) {
+            bannerFailed = false;
+            bannerRetryCount = 0;
+            clearBannerRetry();
+          }
           debugLog('YandexAds banner loaded');
         }),
         YandexAds.addListener(
@@ -218,6 +295,11 @@ async function initialize(injected) {
         throw failure.reason;
       }
       listenersBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') clearBannerRetry();
+        else recoverBannerOnActivity();
+      });
+      window.addEventListener('online', recoverBannerOnActivity);
     }
     debugLog(`YandexAds OK (${APP_CONFIG.ads.nativeTestMode ? 'test' : 'production'} ads)`);
   } catch (error) {
@@ -227,7 +309,9 @@ async function initialize(injected) {
 
   if (!deps.isAdsRemoved()) {
     deps.preloadInterstitial();
-    void showBanner(YandexAds);
+    bannerWanted = true;
+    bannerRetryCount = 0;
+    requestBanner();
   }
 
   deps.preloadRewarded();
@@ -323,7 +407,7 @@ export function preloadRewarded() {
 // Hiding a banner on the active provider: the plugin is already loaded, and an
 // older build without `removeBanner` must not throw on an owner's first launch.
 export function hideBanner() {
-  bannerTelemetry?.stop();
+  stopBannerRecovery();
   if (typeof plugin?.YandexAds?.removeBanner !== 'function') return;
   void Promise.resolve()
     .then(() => plugin.YandexAds.removeBanner())
@@ -336,7 +420,7 @@ export function hideBanner() {
 // That is why this one may still load the plugin, and why it swallows
 // everything — a cleanup that cannot run must not block the reload.
 export async function removeBannerIfAvailable() {
-  bannerTelemetry?.stop();
+  stopBannerRecovery();
   // The handle is unwrapped by property access after the await, never returned
   // from a `.then` callback. A callback that returned the proxy would hand it
   // to the promise resolution procedure, which reads `.then` on whatever it is
@@ -358,7 +442,7 @@ export async function removeBannerIfAvailable() {
 // Invalidate pending requests and cached ads before the UMP form can change consent.
 // Missing reset support is an error: do not proceed with a stale native session.
 export async function resetAdsForPrivacy() {
-  bannerTelemetry?.stop();
+  stopBannerRecovery();
   const handle = await ensurePlugin();
   await handle.YandexAds.resetAds();
 }

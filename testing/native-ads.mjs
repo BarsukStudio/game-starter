@@ -76,6 +76,15 @@ function slot(format) {
       emit(`${format}Dismissed`, payload());
       request.resolve({ ...payload(), presented: true, rewarded: format === 'rewarded' });
     },
+    // The player closed the ad before earning anything. AdMob's per-call reward
+    // promise resolves only on a reward, so it stays pending; the Yandex bridge
+    // resolves its show call on dismissal with the reward bit unset.
+    dismiss() {
+      const request = requests.get(format);
+      if (!request) return;
+      emit(`${format}Dismissed`, payload());
+      if (request.provider === 'yandex') request.resolve({ ...payload(), presented: true, rewarded: false });
+    },
     fail() {
       const error = Object.assign(new Error('Native show failed'), payload());
       emit(`${format}FailedToShow`, error);

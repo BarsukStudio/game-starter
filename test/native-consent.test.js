@@ -82,6 +82,7 @@ async function fixture({ platform = 'ios', info = { canRequestAds: true, status:
   const signalsUrl = url(signalsSource.replace("from '@capacitor/core'", `from ${JSON.stringify(stub)}`));
   const environment = `const fixture = globalThis.__consentFixture;
     const document = fixture.document;
+    const window = { addEventListener() {} };
     const performance = { now: () => fixture.clock };
     const setTimeout = fixture.setTimeout, clearTimeout = fixture.clearTimeout;\n`;
   const admobUrl = url(environment + admobSource.replace(/from '([^']+)'/g, (_, spec) => `from ${JSON.stringify(spec === '../consent-signals.js' ? signalsUrl : stub)}`));

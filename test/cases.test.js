@@ -24,6 +24,8 @@ const CANONICAL = [
     'exiting-the-app-is-safe-off-native',
     'false-after-failure-does-not-finish-the-next-request',
     'false-for-busy-rewarded-keeps-the-accepted-request',
+    'finishing-resolves-on-the-store-settlement-not-on-dispatch',
+    'finishing-without-the-store-settlement-rejects',
     'generic-web-privacy-options-are-unavailable',
     'hide-native-status-bar-is-safe-off-native',
     'initialize-accepts-the-contract-bag-and-resolves',
@@ -45,6 +47,7 @@ const CANONICAL = [
     'purchase-description-is-plain-data-without-a-store',
     'repeated-initialization-keeps-first-callbacks-and-ownership',
     'restore-delegates-to-the-store-and-answers-a-promise',
+    'rewarded-closed-without-confirmation-pays-nothing',
     'rewarded-completes-at-most-once-per-show',
     'rewarded-failure-before-presentation-reports-only-show-failed',
     'rewarded-success-reports-shown-then-closed',
@@ -61,6 +64,7 @@ test('the canonical cases are exactly these', () => {
         [...CANONICAL, ...['native-admob-ads', 'native-yandex-ads'].flatMap(environment => [
           ...adCases.map(({ name }) => `${environment}: ${name}`),
           ...['interstitial', 'rewarded'].map(format => `${environment}: ${format} reserves both formats until native termination`),
+          ...['legacy', 'bound'].map(path => `${environment}: ${path} rewarded dismissed without a reward pays nothing`),
         ])].sort(),
         'a case joining or leaving the contract is an edit to this list'
     );

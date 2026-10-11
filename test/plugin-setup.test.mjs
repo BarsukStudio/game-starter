@@ -79,7 +79,7 @@ implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlytic
       debug: { name: 'Debug', buildSettings: { DEBUG_INFORMATION_FORMAT: 'dwarf-with-dsym' } },
       app: { isa: 'PBXNativeTarget', name: 'App', buildConfigurationList: 'configs', buildPhases: ['resources', 'crashlytics'] },
       configs: { buildConfigurations: ['appDebug'] },
-      appDebug: { name: 'Debug', buildSettings: { PRODUCT_BUNDLE_IDENTIFIER: 'test.example' } },
+      appDebug: { name: 'Debug', buildSettings: { PRODUCT_BUNDLE_IDENTIFIER: 'test.example', OTHER_LDFLAGS: ['-ObjC', '$(inherited)', '-weak_framework', 'SwiftUICore'] } },
       resources: { isa: 'PBXResourcesBuildPhase', files: ['firebaseBuildFile'] },
       firebaseBuildFile: { fileRef: 'firebaseRef' },
       firebaseRef: { path: 'GoogleService-Info.plist' },
@@ -259,6 +259,19 @@ test('complete baseline passes with installed metadata and both native targets',
   assert.deepEqual(fixture(t).verify().errors, []);
 });
 
+test('weak SwiftUICore linking may be a single string or the all-architecture setting', (t) => {
+  for (const settings of [
+    { OTHER_LDFLAGS: '-ObjC -weak_framework SwiftUICore' },
+    { 'OTHER_LDFLAGS[arch=*]': ['$(inherited)', '-weak_framework', 'SwiftUICore'] },
+  ]) {
+    const app = fixture(t);
+    delete app.project.objects.appDebug.buildSettings.OTHER_LDFLAGS;
+    Object.assign(app.project.objects.appDebug.buildSettings, settings);
+    app.write('ios/App/App.xcodeproj/project.pbxproj', app.project);
+    assert.deepEqual(app.verify().errors, [], JSON.stringify(settings));
+  }
+});
+
 test('the reviewed iOS 15 purchase archive passes both native targets', (t) => {
   const purchasePin = manifest.acceptedPins['capacitor-plugin-cdv-purchase'][0];
   assert.deepEqual(fixture(t, { purchasePin }).verify().errors, []);
@@ -343,6 +356,16 @@ for (const [name, mutate, expected] of [
   ['commented upload command', (p) => { p.objects.crashlytics.shellScript = '# "${PODS_ROOT}/FirebaseCrashlytics/run"'; }, /final App build phase/],
   ['no dSYM generation', (p) => { p.objects.appDebug.buildSettings.DEBUG_INFORMATION_FORMAT = 'dwarf'; }, /generate DWARF with dSYM/],
   ['missing dSYM inputs', (p) => { p.objects.crashlytics.inputPaths = []; }, /Crashlytics input missing/],
+  ['strong SwiftUICore linking', (p) => { p.objects.appDebug.buildSettings.OTHER_LDFLAGS = ['-ObjC', '$(inherited)']; }, /weak-link SwiftUICore/],
+  ['simulator-only weak SwiftUICore', (p) => {
+    delete p.objects.appDebug.buildSettings.OTHER_LDFLAGS;
+    p.objects.appDebug.buildSettings['OTHER_LDFLAGS[sdk=iphonesimulator*]'] = ['-weak_framework', 'SwiftUICore'];
+  }, /weak-link SwiftUICore/],
+  ['a weak framework other than SwiftUICore', (p) => { p.objects.appDebug.buildSettings.OTHER_LDFLAGS = ['-weak_framework', 'SwiftUI']; }, /weak-link SwiftUICore/],
+  ['one configuration without weak SwiftUICore', (p) => {
+    p.objects.configs.buildConfigurations.push('appRelease');
+    p.objects.appRelease = { name: 'Release', buildSettings: { PRODUCT_BUNDLE_IDENTIFIER: 'test.example', DEBUG_INFORMATION_FORMAT: 'dwarf-with-dsym', OTHER_LDFLAGS: '-ObjC' } };
+  }, /weak-link SwiftUICore/],
 ]) {
   test(`iOS rejects ${name}`, (t) => {
     const app = fixture(t); mutate(app.project); app.write('ios/App/App.xcodeproj/project.pbxproj', app.project);
