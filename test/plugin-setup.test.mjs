@@ -259,10 +259,15 @@ test('complete baseline passes with installed metadata and both native targets',
   assert.deepEqual(fixture(t).verify().errors, []);
 });
 
-test('weak SwiftUICore linking may be a single string or the all-architecture setting', (t) => {
+test('weak SwiftUICore linking may be a string, the all-architecture setting, or both', (t) => {
   for (const settings of [
     { OTHER_LDFLAGS: '-ObjC -weak_framework SwiftUICore' },
     { 'OTHER_LDFLAGS[arch=*]': ['$(inherited)', '-weak_framework', 'SwiftUICore'] },
+    {
+      OTHER_LDFLAGS: '-weak_framework SwiftUICore',
+      'OTHER_LDFLAGS[arch=*]': ['-weak_framework', 'SwiftUICore'],
+      'OTHER_LDFLAGS[sdk=iphonesimulator*]': ['-ObjC'],
+    },
   ]) {
     const app = fixture(t);
     delete app.project.objects.appDebug.buildSettings.OTHER_LDFLAGS;
@@ -360,6 +365,12 @@ for (const [name, mutate, expected] of [
   ['simulator-only weak SwiftUICore', (p) => {
     delete p.objects.appDebug.buildSettings.OTHER_LDFLAGS;
     p.objects.appDebug.buildSettings['OTHER_LDFLAGS[sdk=iphonesimulator*]'] = ['-weak_framework', 'SwiftUICore'];
+  }, /weak-link SwiftUICore/],
+  ['an all-architecture setting without weak SwiftUICore overriding the plain one', (p) => {
+    p.objects.appDebug.buildSettings['OTHER_LDFLAGS[arch=*]'] = ['-ObjC', '$(inherited)'];
+  }, /weak-link SwiftUICore/],
+  ['a device-only setting without weak SwiftUICore', (p) => {
+    p.objects.appDebug.buildSettings['OTHER_LDFLAGS[sdk=iphoneos*]'] = ['-ObjC'];
   }, /weak-link SwiftUICore/],
   ['a weak framework other than SwiftUICore', (p) => { p.objects.appDebug.buildSettings.OTHER_LDFLAGS = ['-weak_framework', 'SwiftUI']; }, /weak-link SwiftUICore/],
   ['one configuration without weak SwiftUICore', (p) => {

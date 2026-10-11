@@ -140,7 +140,10 @@ For iOS, set the Podfile deployment target from `ios.deploymentTarget`; align th
 App target deployment setting in Xcode. Add `-weak_framework SwiftUICore` to the
 App target's `OTHER_LDFLAGS` in every configuration: Xcode links SwiftUICore,
 which exists only on iOS 18+, and without weak linking the app aborts at launch
-on older supported systems. Native SDKs are registered by the sync in step 4.
+on older supported systems. A conditional variant such as
+`OTHER_LDFLAGS[arch=*]` replaces the plain setting, so each variant a device
+build can use must carry the flag too. Native SDKs are registered by the sync in
+step 4.
 
 Firebase Analytics also needs native app configuration: on Android apply Google
 Services and keep a matching `android/app/google-services.json`; on iOS bundle the
