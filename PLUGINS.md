@@ -142,7 +142,8 @@ App target's `OTHER_LDFLAGS` in every configuration: Xcode links SwiftUICore,
 which exists only on iOS 18+, and without weak linking the app aborts at launch
 on older supported systems. A conditional variant such as
 `OTHER_LDFLAGS[arch=*]` replaces the plain setting, so each variant a device
-build can use must carry the flag too. Native SDKs are registered by the sync in
+build can use must carry the flag too, and the unconditional one (`[arch=*]`,
+else the plain key) must exist. Native SDKs are registered by the sync in
 step 4.
 
 Firebase Analytics also needs native app configuration: on Android apply Google

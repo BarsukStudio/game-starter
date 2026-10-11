@@ -9,7 +9,10 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.25**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.26**.
+Alpha.26 also requires the setting a device build falls back to — `[arch=*]`,
+else plain `OTHER_LDFLAGS` — to exist with the flag, so a flag kept only in a
+single-architecture variant no longer passes.
 Alpha.25 closes a gap in the SwiftUICore check: every linker-flag variant a
 device build can resolve to (`OTHER_LDFLAGS`, `[arch=*]`, device-SDK conditions)
 must weak-link it, because a conditional setting replaces the plain one; only a

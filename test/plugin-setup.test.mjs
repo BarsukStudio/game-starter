@@ -369,6 +369,10 @@ for (const [name, mutate, expected] of [
   ['an all-architecture setting without weak SwiftUICore overriding the plain one', (p) => {
     p.objects.appDebug.buildSettings['OTHER_LDFLAGS[arch=*]'] = ['-ObjC', '$(inherited)'];
   }, /weak-link SwiftUICore/],
+  ['weak SwiftUICore only in a single-architecture setting', (p) => {
+    delete p.objects.appDebug.buildSettings.OTHER_LDFLAGS;
+    p.objects.appDebug.buildSettings['OTHER_LDFLAGS[arch=x86_64]'] = ['-weak_framework', 'SwiftUICore'];
+  }, /weak-link SwiftUICore/],
   ['a device-only setting without weak SwiftUICore', (p) => {
     p.objects.appDebug.buildSettings['OTHER_LDFLAGS[sdk=iphoneos*]'] = ['-ObjC'];
   }, /weak-link SwiftUICore/],

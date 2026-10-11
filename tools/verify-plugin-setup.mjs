@@ -287,16 +287,19 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     });
     // Xcode autolinks SwiftUICore, which exists only on iOS 18+. Supported older
     // systems abort at launch unless the App weak-links it; migrations drop it.
-    // A conditional setting replaces the plain one wherever its condition holds,
-    // so every variant a device build can resolve to must carry the flag; only a
-    // simulator-only variant is exempt. Xcode's per-arch editor writes `[arch=*]`.
+    // A conditional setting replaces the plain one wherever its condition holds.
+    // The setting every device build falls back to — `[arch=*]`, written by
+    // Xcode's per-arch editor, else the plain key — must exist and carry the
+    // flag, and so must every other variant except a simulator-only one.
     const weakSwiftUICore = (config) => {
-      const variants = Object.keys(config)
-        .filter((key) => /^OTHER_LDFLAGS(\[.*\])?$/.test(key) && !key.includes('sdk=iphonesimulator'));
-      return variants.length > 0 && variants.every((key) => {
+      const weak = (key) => {
         const flags = Array.isArray(config[key]) ? config[key] : String(config[key]).split(/\s+/);
         return flags.some((flag, index) => flag === '-weak_framework' && flags[index + 1] === 'SwiftUICore');
-      });
+      };
+      const fallback = 'OTHER_LDFLAGS[arch=*]' in config ? 'OTHER_LDFLAGS[arch=*]' : 'OTHER_LDFLAGS';
+      return fallback in config && Object.keys(config)
+        .filter((key) => /^OTHER_LDFLAGS(\[.*\])?$/.test(key) && !key.includes('sdk=iphonesimulator'))
+        .every(weak);
     };
     check(settings.length > 0 && settings.every(weakSwiftUICore),
       `iOS: every App configuration must weak-link SwiftUICore (OTHER_LDFLAGS -weak_framework SwiftUICore) for iOS ${manifest.ios.deploymentTarget}-17.`);
