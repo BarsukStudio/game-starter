@@ -339,6 +339,41 @@ If the game already uses Passport, **append npm script names** to its existing
 Do not insert shell commands or replace the game's existing checks. Run Passport
 with `--verify` to execute them; without it Passport only records metadata.
 
+### Old WebView APIs
+
+`build.target: 'es2020'` lowers syntax only; it adds no missing API. An
+`Object.hasOwn` call (Chrome 93) reached older Android WebViews this way and threw
+on every progress write. `barsuk-verify-web-compat` reads `dist/assets/*.js` after
+the build and fails on a call to a listed API newer than the minimum: Chrome 80,
+the version es2020 syntax itself needs.
+
+It parses the bundle with `parseSync` from the game's own Vite, resolved from the
+game root (`--root`, default `.`). That requires Vite 8 or later in the game and
+the Node version Vite asks for (20.19+ or 22.12+); the starter adds no dependency.
+A missing Vite, a Vite without `parseSync`, a file that does not parse, a missing
+`dist/assets` or one without `.js` files all fail the check.
+
+Strings, comments, template text and regexes are not calls; `globalThis.`,
+`window.`, `self.` prefixes and `.call` / `.apply` / `.bind` do not hide one.
+`?.` counts only on the step right after the API property: `obj.api?.()` and
+`obj.api?.call(...)` pass, while a bare global (`structuredClone?.()`, a
+ReferenceError), a later step (`obj.api.call?.()`), an optional receiver
+(`list?.at()`) or a chain closed by parentheses before the call
+(`(obj.api?.call)(...)`) do not. `scheduler.postTask` is always reported, a
+deliberate restriction: `scheduler` itself is absent before Chrome 94, so
+`scheduler.postTask?.()` and `typeof scheduler.postTask` throw, and safe forms such
+as `globalThis.scheduler?.postTask?.(...)` are blocked too rather than modelled.
+A call passes only in the consequent of an `if` or `?:`,
+or the right side of `&&`, whose condition is a positive test of the same callee:
+`typeof X === 'function'`, `typeof X !== 'undefined'` or `'name' in owner`, alone
+or joined by `&&`. A test does not cover a call inside a nested function, another
+`${...}`, an `else`, or code after an early `return`.
+
+Both template `build-native-release.mjs` copies run it from the installed
+`@barsuk/game-starter`, never through npx, and stop before any build step when
+the pin predates the tool. `--dir` and `--min-chrome` override the defaults. It
+checks a fixed API list, not every API, and no WebView runs the bundle.
+
 ## 5. Acceptance beyond preflight
 
 - Run the game's required tests and web build. Confirm a consumer without Firebase

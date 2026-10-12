@@ -9,7 +9,11 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.26**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.27**.
+Alpha.27 adds `barsuk-verify-web-compat`, which parses a built bundle with the
+game's own Vite 8+ and fails on a call to a listed browser API newer than Chrome
+80 outside a positive feature test of that callee. Both template native release
+scripts run it from the installed starter. The contract is unchanged.
 Alpha.26 also requires the setting a device build falls back to — `[arch=*]`,
 else plain `OTHER_LDFLAGS` — to exist with the flag, so a flag kept only in a
 single-architecture variant no longer passes.

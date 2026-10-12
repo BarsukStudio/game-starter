@@ -44,6 +44,7 @@ for (const [platform, failure] of [['android', null], ['ios', null], ['ios', 'up
     write(`node_modules/${name}/package.json`, name.endsWith('runtime')
       ? { version, type: 'module', exports: { './ad-lifecycle': './ad-lifecycle.js' } } : { version });
   }
+  write('node_modules/@barsuk/game-starter/tools/verify-web-compat.mjs', '');
   write('node_modules/@barsuk/game-runtime/ad-lifecycle.js', 'export const createAdLifecycle = () => ({setAvailability() {}});');
   write('src/js/platform/config.js', `export const APP_CONFIG = { ads: { cas: { ios: { casId: '123456' } } } };`);
   write('ios/App/App.xcodeproj/project.pbxproj', 'native project fixture');
@@ -97,6 +98,8 @@ for (const [platform, failure] of [['android', null], ['ios', null], ['ios', 'up
     return;
   }
   assert.ok(commands.some(({ command, args }) => command === 'npx' && args.join(' ') === `cap sync ${platform}`));
+  const compat = commands.findIndex(({ command, args }) => command === 'node' && args[0].endsWith('/@barsuk/game-starter/tools/verify-web-compat.mjs'));
+  assert.ok(compat > commands.findIndex(({ args }) => args[0] === 'scripts/assert-production-ads.mjs'));
   assert.ok(!commands.some(({ args }) => args[0] === 'scripts/patch-native-ad-events.mjs'));
   if (platform === 'android') {
     assert.ok(commands.some(({ args }) => args[0] === 'scripts/cap-sync-android.mjs'));
@@ -112,6 +115,18 @@ for (const [platform, failure] of [['android', null], ['ios', null], ['ios', 'up
       fs.readFileSync(path.join(out, 'native/ios/casconfig.rb'), 'utf8'));
   }
 });
+}
+
+for (const nativeStack of ['admob', 'cas']) {
+  test(`${nativeStack} release stops before any command when the pinned starter lacks the bundle API check`, (t) => {
+    const out = seed(t, nativeStack);
+    fs.mkdirSync(path.join(out, 'node_modules/@barsuk/game-starter'), { recursive: true });
+    fs.writeFileSync(path.join(out, 'node_modules/@barsuk/game-starter/package.json'), JSON.stringify({ version: '0.1.0-alpha.26' }));
+    const result = spawnSync(process.execPath, ['scripts/build-native-release.mjs', 'android'], { cwd: out, encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /has no tools\/verify-web-compat\.mjs; repin to 0\.1\.0-alpha\.27/);
+    assert.doesNotMatch(result.stdout + result.stderr, /verify:js|npm (ERR|error)/);
+  });
 }
 
 test('native stack selection is explicit and existing consumer files are protected', (t) => {

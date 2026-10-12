@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 
 // The one supported way to produce native release web assets. It forces
 // production ad units, proves it against the built bundle, and only then syncs
@@ -24,6 +27,15 @@ const env = {
 
 const run = (command, args) => execFileSync(command, args, { stdio: 'inherit', env });
 
+// The bundle API check runs from the pinned starter, never through npx: a pin
+// without the tool must stop here, before any asset changes, rather than let
+// npx look the command up on the public registry.
+const starterRoot = path.dirname(createRequire(import.meta.url).resolve('@barsuk/game-starter/package.json'));
+const webCompat = path.join(starterRoot, 'tools/verify-web-compat.mjs');
+if (!fs.existsSync(webCompat)) {
+  throw new Error('build-native-release: the pinned @barsuk/game-starter has no tools/verify-web-compat.mjs; repin to 0.1.0-alpha.27 or later.');
+}
+
 // Consumer-owned mandatory gates run before any release asset mutation.
 run('npm', ['run', 'verify:js']);
 run('npm', ['run', 'verify:native', '--', platform]);
@@ -32,6 +44,9 @@ run('npm', ['run', 'verify:native', '--', platform]);
 run('node', ['scripts/patch-native-ad-events.mjs', '--check']);
 run('node', ['scripts/vite-run.mjs', 'build']);
 run('node', ['scripts/assert-production-ads.mjs']);
+// es2020 lowers syntax only; an API newer than the oldest supported WebView
+// would ship untouched and throw there.
+run('node', [webCompat]);
 
 if (platform === 'ios') run('npx', ['cap', 'sync', 'ios']);
 else run('node', ['scripts/cap-sync-android.mjs']);

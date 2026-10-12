@@ -72,6 +72,12 @@ npm test              # node --test autodiscovery, Node >= 20
 npm pack --dry-run    # the `files` whitelist
 ```
 
+`tools/verify-web-compat.mjs` parses with the consuming game's Vite, and this
+repository installs none: its parsing tests are skipped unless
+`BARSUK_VITE_ROOT` points at a project with Vite 8+ installed, e.g.
+`BARSUK_VITE_ROOT=../../../Multiplatform/gym2 npm test`. Run them that way before
+reporting a change to the tool.
+
 `engines.node` is `>=20` and stays there: the manifest and the template are
 plain data and plain modules. Only the conformance runner needs
 `module.registerHooks()`, which arrived in Node 22.15 — it checks for the API
