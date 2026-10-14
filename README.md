@@ -9,7 +9,12 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.28**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.29**.
+Alpha.29 accepts the runtime 0.5.0 source revision, which adds
+`rewarded-request-context`, and removes the template's own copy of that
+coordinator: a game now imports it from the runtime and keeps its placements and
+amounts. The runtime version requires `createRequestId` and reports a throwing
+handler through `onWarn`. The contract is unchanged.
 Alpha.28 accepts the published runtime 0.4.0 source revision in native plugin
 verification, which adds `purchase-ledger`. It also drops the unused
 `recordConsentSignalsError` from the template's consent telemetry and lists the
