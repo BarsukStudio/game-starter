@@ -384,6 +384,10 @@ checks a fixed API list, not every API, and no WebView runs the bundle.
   lifecycle for the enabled functions. For Firebase, trigger a controlled JS error
   and a native test crash in a QA build, relaunch without a debugger, and verify the
   reports, readable stacks and `js_bootstrap` in the correct Firebase app.
+- Before the first release that sends ad or consent telemetry, register the
+  standard GA4 custom dimensions in the game's GA4 property. Registration is not
+  retroactive. The [Console list](../barsuk-studio-console/docs/analytics-workflow.md#ga4-custom-definitions)
+  owns the parameters and scopes.
 - Record versions, platforms, evidence and remaining gates in the game's status
   document. Keep account IDs, store state and device results out of this shared guide.
 

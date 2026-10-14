@@ -47,17 +47,10 @@ export function recordConsentAttempt({ attempt, stage, failed = false, error, ca
   });
 }
 
-// A preference-read failure is separate from UMP failure: ads may still be
-// eligible, but Yandex must retain false consent when its signals are unknown.
-export function recordConsentSignalsError(error) {
-  send('bs_consent_signals_error', { stage: 'signals_read', error_code: errorCode(error) });
-}
-
 // Measurement contract (native builds containing schema_revision=1 only):
 // - bs_consent_attempt records each attempt; attempt_count is on the final result.
 // - bs_consent_start -> bs_consent_complete | bs_consent_error, once per launch.
 // - bs_privacy_start -> bs_privacy_complete | bs_privacy_error, per accepted open.
-// - bs_consent_signals_error is auxiliary, not a failed UMP flow.
 // Failure rate = error event count / start event count within the same versions,
 // platform and date range. Affected-user share = users with error / users with
 // start (deduplicate users; never sum daily unique-user counts).

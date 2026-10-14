@@ -40,7 +40,6 @@ async function fixture(consent = async () => ({ canRequestAds: true })) {
   const stub = moduleUrl(`
     const f = globalThis.__adRecoveryFixture;
     export const beginConsentTelemetry = () => () => {}; export const recordConsentAttempt = () => {};
-    export const recordConsentSignalsError = () => {};
     export const createBannerTelemetry = () => ({ request() {}, loaded() {}, failed() {}, retryScheduled() {}, retryExhausted() {}, stop() {} });
     export const FirebaseAnalytics = { logEvent: async event => f.telemetry.push(event) };
     export const isNative = true; export const nativePlatform = 'android';
