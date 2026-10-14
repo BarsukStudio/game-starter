@@ -9,7 +9,12 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.27**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.28**.
+Alpha.28 accepts the published runtime 0.4.0 source revision in native plugin
+verification, which adds `purchase-ledger`. It also drops the unused
+`recordConsentSignalsError` from the template's consent telemetry and lists the
+GA4 custom dimensions to register before a game's first release. The contract
+is unchanged.
 Alpha.27 adds `barsuk-verify-web-compat`, which parses a built bundle with the
 game's own Vite 8+ and fails on a call to a listed browser API newer than Chrome
 80 outside a positive feature test of that callee. Both template native release
