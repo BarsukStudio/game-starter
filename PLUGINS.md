@@ -322,9 +322,12 @@ with the same flags **from the game root**, without repinning the game.
 
 The tool verifies reference pins, lockfile/installed metadata, documented native
 settings, registrations, Firebase identity, bundle inclusion, dSYM configuration,
-JS wiring and the existing ad patch runner's exit status. It also fails while any
-piece of Firebase Performance remains: the npm package or its lockfile entry, the
-Android Gradle plugin, the iOS pods or either generated registration. Missing
+JS wiring and the existing ad patch runner's exit status. It also checks that
+Firebase Performance is absent from the configurations it reads: npm manifests,
+Gradle classpath, plugin, SDK dependency, `firebasePerfVersion`, generated Gradle
+dependencies and settings, Android manifest metadata, both iOS pods, Podfile.lock,
+both plugin registrations and `Info.plist` keys. Comments are ignored. This is
+not proof that a built artifact is free of the SDK. Missing
 inputs and failed checks exit nonzero. iOS inspection uses macOS `plutil` to read the Xcode/plist
 structure; it does not infer build success by finding a script name in text.
 It is a source/metadata preflight, not a Gradle/Swift interpreter, dependency

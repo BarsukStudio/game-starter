@@ -22,8 +22,10 @@ const firebasePlugins = {
   '@capacitor-firebase/crashlytics': ['CapacitorFirebaseCrashlytics', 'FirebaseCrashlyticsPlugin'],
 };
 // Firebase Performance left the platform in alpha.30: its data went unread, and
-// removing an optional SDK lets its effect on ANRs be measured. A consumer that
-// still carries any piece of it has not finished that removal.
+// removing an optional SDK lets its effect on ANRs be measured. Each setting is
+// checked in the file that owns it, with comments stripped, so a note about the
+// removal is not a leftover. This is source evidence: a built artifact can still
+// carry the SDK through a path no listed file declares.
 const performancePackage = '@capacitor-firebase/performance';
 const dsymInputs = [
   '${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}',
@@ -77,8 +79,16 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
   const installedLock = json('node_modules/.package-lock.json');
   const declared = { ...pkg.dependencies, ...pkg.devDependencies };
   diagnostics ||= Boolean(declared['@capacitor-firebase/crashlytics']);
-  check(!declared[performancePackage] && !lock.packages?.[`node_modules/${performancePackage}`],
-    `${performancePackage}: Firebase Performance is no longer part of the platform; uninstall it.`);
+  function performanceLeftovers(entries) {
+    for (const [file, source, pattern] of entries) {
+      const found = String(source).match(pattern)?.[0]?.trim();
+      check(!found, `${file}: Firebase Performance leftover \`${found}\`; it is no longer part of the platform.`);
+    }
+  }
+  performanceLeftovers([
+    ['package.json', Object.keys(declared).join('\n'), /^@capacitor-firebase\/performance$/m],
+    ['package-lock.json', Object.keys(lock.packages ?? {}).join('\n'), /^node_modules\/@capacitor-firebase\/performance$/m],
+  ]);
   const groups = [manifest.platform, ...targets.filter((target) => target !== 'web').map((target) => manifest[target])];
   if (diagnostics) groups.push(manifest.diagnostics);
   for (const section of ['dependencies', 'devDependencies']) {
@@ -181,9 +191,19 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     const variables = code(read('android/variables.gradle'));
     const generated = code(read('android/app/capacitor.build.gradle'));
     const registry = json('android/app/src/main/assets/capacitor.plugins.json');
-    check(!/['"]com\.google\.firebase:perf-plugin:/.test(rootGradle) && !/['"]com\.google\.firebase\.firebase-perf['"]/.test(appGradle)
-      && !(Array.isArray(registry) && registry.some((plugin) => plugin.pkg === performancePackage)),
-      'Android: Firebase Performance Gradle plugin or registration remains; remove it and sync.');
+    const xml = (file) => read(file).replace(/<!--[\s\S]*?-->/g, '');
+    const debugManifest = 'android/app/src/debug/AndroidManifest.xml';
+    performanceLeftovers([
+      ['android/build.gradle', rootGradle, /com\.google\.firebase:perf-plugin[\w.:-]*/],
+      // The Gradle plugin id and the SDK artifact, including -ktx and BoM-less pins.
+      ['android/app/build.gradle', appGradle, /com\.google\.firebase[.:]firebase-perf[\w.:$-]*/],
+      ['android/variables.gradle', variables, /\bfirebasePerfVersion\b.*/],
+      ['android/app/capacitor.build.gradle', generated, /.*capacitor-firebase-performance.*/],
+      ['android/capacitor.settings.gradle', code(read('android/capacitor.settings.gradle')), /.*capacitor-firebase-performance.*/],
+      ['android/app/src/main/assets/capacitor.plugins.json', Array.isArray(registry) ? registry.map((plugin) => plugin.pkg).join('\n') : '', /^@capacitor-firebase\/performance$/m],
+      ['android/app/src/main/AndroidManifest.xml', xml('android/app/src/main/AndroidManifest.xml'), /firebase_performance_\w+/],
+      ...(fs.existsSync(path.join(root, debugManifest)) ? [[debugManifest, xml(debugManifest), /firebase_performance_\w+/]] : []),
+    ]);
     const classpaths = { ...manifest.android.classpaths, ...(cas ? { 'com.cleveradssolutions:gradle-plugin': manifest.advertising.cas.sdkVersion } : {}), ...(diagnostics ? manifest.diagnostics.androidClasspaths : {}) };
     for (const [coordinate, version] of Object.entries(classpaths)) {
       check(new RegExp(`\\bclasspath\\s+['"]${escape(coordinate)}:${escape(version)}['"]`).test(rootGradle), `Android: missing active classpath ${coordinate}:${version}.`);
@@ -258,9 +278,12 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     check(podLock === read('ios/App/Pods/Manifest.lock'), 'iOS: Pods are out of sync with Podfile.lock.');
     check(new RegExp(`platform\\s*:ios,\\s*['"]${escape(manifest.ios.deploymentTarget)}['"]`).test(podfile), `iOS: Podfile deployment target must be ${manifest.ios.deploymentTarget}.`);
     const registry = json('ios/App/App/capacitor.config.json');
-    check(!/^\s*pod\s+['"]CapacitorFirebasePerformance['"]/m.test(podfile) && !/^  - (?:Capacitor)?FirebasePerformance\b/m.test(podLock)
-      && !registry.packageClassList?.includes('FirebasePerformancePlugin'),
-      'iOS: Firebase Performance pods or registration remain; remove them, sync and install pods.');
+    performanceLeftovers([
+      ['ios/App/Podfile', podfile, /pod\s+['"](?:Capacitor)?FirebasePerformance\b[^'"]*/],
+      ['ios/App/Podfile.lock', podLock, /^ {2}- (?:Capacitor)?FirebasePerformance\b.*/m],
+      ['ios/App/App/capacitor.config.json', (registry.packageClassList ?? []).join('\n'), /^FirebasePerformancePlugin$/m],
+      ['ios/App/App/Info.plist', Object.keys(plist('ios/App/App/Info.plist')).join('\n'), /^firebase_performance_\w+$/m],
+    ]);
     for (const [name, [pod, className]] of Object.entries(plugins)) {
       check(new RegExp(`^\\s*pod\\s+['"]${pod}['"]`, 'm').test(podfile), `iOS: ${pod} missing from Podfile.`);
       const expectedVersion = json(`node_modules/${name}/package.json`).version;

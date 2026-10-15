@@ -9,14 +9,24 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.30**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.31**.
+Alpha.31 widens the plugin verifier's Performance check, which in alpha.30
+missed a direct SDK dependency, `firebasePerfVersion`, the generated Gradle
+dependency and settings, and collection settings. It now checks each file that
+owns a Performance setting — npm manifests, the root, app, variables and
+generated Gradle files, both Android manifests, the Podfile (both pods),
+Podfile.lock, both plugin registrations and `Info.plist` — ignores comments, and
+names the file and the leftover it found. This is a source check of those
+configurations; it does not prove a built artifact is free of the SDK. The
+verifier now reads `android/capacitor.settings.gradle`. The contract is
+unchanged.
 Alpha.30 removes Firebase Performance from the platform. Its data went unread,
 and removing an optional SDK lets its effect on ANRs be measured. The template's
 `diagnostics.js` keeps Crashlytics — error reports and the `game_stage` key — and
 drops the `js_bootstrap` trace; `finishBootstrapTrace` is renamed
 `markSplashHidden`, since it now only moves `game_stage` to `splash_hidden`.
 `testing/native-ads.mjs` no longer exports a `FirebasePerformance` stand-in.
-The plugin verifier now fails while any piece of Performance remains. A consumer
+The plugin verifier rejects the Performance setup it checks. A consumer
 removes the npm package, the `perf-plugin` classpath, the `firebase-perf` Gradle
 plugin, `firebasePerfVersion`, Performance collection settings in
 `AndroidManifest.xml` and `Info.plist`, then syncs both platforms and reinstalls

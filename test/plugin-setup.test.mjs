@@ -57,6 +57,7 @@ apply plugin: 'com.google.firebase.crashlytics'
 implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlyticsVersion"
 `);
   write('android/app/capacitor.build.gradle', Object.keys(plugins).map((name) => `implementation project(':${name.replace(/^@/, '').replace('/', '-')}')`).join('\n'));
+  write('android/capacitor.settings.gradle', Object.keys(plugins).map((name) => `include ':${name.replace(/^@/, '').replace('/', '-')}'`).join('\n'));
   write('android/app/src/main/assets/capacitor.plugins.json', Object.keys(plugins).map((pkg) => ({ pkg })));
   write('android/app/src/main/AndroidManifest.xml', '<manifest><application/></manifest>');
   write('android/app/google-services.json', { project_info: { project_id: 'test' }, client: [{ client_info: { mobilesdk_app_id: '1:1:android:test', android_client_info: { package_name: 'test.example' } } }] });
@@ -104,6 +105,7 @@ implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlytic
     : spawnSync(command, args, options);
   return {
     directory, write, read, project,
+    append: (name, contents) => write(name, fs.readFileSync(path.join(directory, name), 'utf8') + contents),
     verify: (options = {}) => verifyPluginSetup({ root: directory, targets: ['android', 'ios'], diagnostics, run, ...options }),
     remove: (file) => fs.rmSync(path.join(directory, file), { recursive: true }),
   };
@@ -299,6 +301,7 @@ for (const mismatch of ['integrity', 'version']) {
 }
 
 for (const file of ['package-lock.json', 'node_modules/.package-lock.json', 'android/build.gradle', 'android/variables.gradle',
+  'android/capacitor.settings.gradle',
   'android/app/build.gradle', 'android/app/google-services.json', 'ios/App/Podfile', 'ios/App/Pods/Manifest.lock',
   'ios/App/App/AppDelegate.swift', 'ios/App/App.xcodeproj/project.pbxproj', 'ios/App/App/GoogleService-Info.plist',
   'scripts/patch-native-ad-events.mjs', 'src/js/platform/diagnostics.js']) {
@@ -324,43 +327,76 @@ test('an npm declaration without an installed plugin fails', (t) => {
   assert.ok(app.verify().errors.some((error) => error.includes('@capacitor-firebase/crashlytics')));
 });
 
-test('any remaining piece of Firebase Performance fails on npm, Android and iOS', (t) => {
-  const name = '@capacitor-firebase/performance';
-  const leftovers = {
-    npm: (app) => {
-      const pkg = app.read('package.json'); pkg.dependencies[name] = '8.5.2'; app.write('package.json', pkg);
-    },
-    lockfile: (app) => {
-      const lock = app.read('package-lock.json'); lock.packages[`node_modules/${name}`] = { version: '8.5.2' }; app.write('package-lock.json', lock);
-    },
-    classpath: (app) => app.write('android/build.gradle', fs.readFileSync(path.join(app.directory, 'android/build.gradle'), 'utf8')
-      + "\nclasspath 'com.google.firebase:perf-plugin:2.0.2'"),
-    'Gradle plugin': (app) => app.write('android/app/build.gradle', fs.readFileSync(path.join(app.directory, 'android/app/build.gradle'), 'utf8')
-      + "\napply plugin: 'com.google.firebase.firebase-perf'"),
-    'Android registration': (app) => {
-      const registry = app.read('android/app/src/main/assets/capacitor.plugins.json'); registry.push({ pkg: name });
-      app.write('android/app/src/main/assets/capacitor.plugins.json', registry);
-    },
-    Podfile: (app) => app.write('ios/App/Podfile', fs.readFileSync(path.join(app.directory, 'ios/App/Podfile'), 'utf8')
-      + "\npod 'CapacitorFirebasePerformance'"),
-    'Podfile.lock': (app) => {
-      const lock = fs.readFileSync(path.join(app.directory, 'ios/App/Podfile.lock'), 'utf8') + '  - FirebasePerformance (12.19.0):\n';
-      app.write('ios/App/Podfile.lock', lock); app.write('ios/App/Pods/Manifest.lock', lock);
-    },
-    'iOS registration': (app) => {
-      const registry = app.read('ios/App/App/capacitor.config.json'); registry.packageClassList.push('FirebasePerformancePlugin');
-      app.write('ios/App/App/capacitor.config.json', registry);
-    },
-  };
-  for (const [leftover, add] of Object.entries(leftovers)) {
+// Every place a Performance setting can live, with the residue the error names.
+const performanceLeftovers = {
+  'package.json': [(app) => {
+    const pkg = app.read('package.json'); pkg.dependencies['@capacitor-firebase/performance'] = '8.5.2'; app.write('package.json', pkg);
+  }, '@capacitor-firebase/performance'],
+  'package-lock.json': [(app) => {
+    const lock = app.read('package-lock.json'); lock.packages['node_modules/@capacitor-firebase/performance'] = { version: '8.5.2' };
+    app.write('package-lock.json', lock);
+  }, 'node_modules/@capacitor-firebase/performance'],
+  'android/build.gradle': [(app) => app.append('android/build.gradle', "\nclasspath 'com.google.firebase:perf-plugin:2.0.2'"),
+    'com.google.firebase:perf-plugin:2.0.2'],
+  'android/app/build.gradle': [(app) => app.append('android/app/build.gradle', "\napply plugin: 'com.google.firebase.firebase-perf'"),
+    'com.google.firebase.firebase-perf'],
+  'android/app/build.gradle (SDK)': [(app) => app.append('android/app/build.gradle', '\nimplementation "com.google.firebase:firebase-perf:22.0.6"'),
+    'com.google.firebase:firebase-perf:22.0.6'],
+  'android/variables.gradle': [(app) => app.append('android/variables.gradle', "\nfirebasePerfVersion = '22.0.6'"),
+    "firebasePerfVersion = '22.0.6'"],
+  'android/app/capacitor.build.gradle': [(app) => app.append('android/app/capacitor.build.gradle', "\nimplementation project(':capacitor-firebase-performance')"),
+    "implementation project(':capacitor-firebase-performance')"],
+  'android/capacitor.settings.gradle': [(app) => app.append('android/capacitor.settings.gradle', "\ninclude ':capacitor-firebase-performance'"),
+    "include ':capacitor-firebase-performance'"],
+  'android/app/src/main/assets/capacitor.plugins.json': [(app) => {
+    const registry = app.read('android/app/src/main/assets/capacitor.plugins.json'); registry.push({ pkg: '@capacitor-firebase/performance' });
+    app.write('android/app/src/main/assets/capacitor.plugins.json', registry);
+  }, '@capacitor-firebase/performance'],
+  'android/app/src/main/AndroidManifest.xml': [(app) => app.write('android/app/src/main/AndroidManifest.xml',
+    '<manifest><application><meta-data android:name="firebase_performance_collection_enabled" android:value="true"/></application></manifest>'),
+  'firebase_performance_collection_enabled'],
+  'android/app/src/debug/AndroidManifest.xml': [(app) => app.write('android/app/src/debug/AndroidManifest.xml',
+    '<manifest><application><meta-data android:name="firebase_performance_logcat_enabled" android:value="true"/></application></manifest>'),
+  'firebase_performance_logcat_enabled'],
+  'ios/App/Podfile': [(app) => app.append('ios/App/Podfile', "\n  pod 'CapacitorFirebasePerformance', :path => '../../node_modules/@capacitor-firebase/performance'"),
+    "pod 'CapacitorFirebasePerformance"],
+  'ios/App/Podfile (SDK)': [(app) => app.append('ios/App/Podfile', "\n  pod 'FirebasePerformance', '12.19.0'"),
+    "pod 'FirebasePerformance"],
+  'ios/App/Podfile.lock': [(app) => {
+    for (const file of ['ios/App/Podfile.lock', 'ios/App/Pods/Manifest.lock']) app.append(file, '  - FirebasePerformance (12.19.0):\n');
+  }, '- FirebasePerformance (12.19.0):'],
+  'ios/App/App/capacitor.config.json': [(app) => {
+    const registry = app.read('ios/App/App/capacitor.config.json'); registry.packageClassList.push('FirebasePerformancePlugin');
+    app.write('ios/App/App/capacitor.config.json', registry);
+  }, 'FirebasePerformancePlugin'],
+  'ios/App/App/Info.plist': [(app) => app.write('ios/App/App/Info.plist', { firebase_performance_collection_enabled: true }),
+    'firebase_performance_collection_enabled'],
+};
+
+for (const [name, [add, residue]] of Object.entries(performanceLeftovers)) {
+  test(`a Firebase Performance leftover is named with its file: ${name}`, (t) => {
     const app = fixture(t); add(app);
-    assert.ok(app.verify().errors.some((error) => /Firebase Performance/.test(error)), leftover);
-  }
-  // Comments are not setup.
+    const file = name.replace(/ \(SDK\)$/, '');
+    const errors = app.verify().errors;
+    assert.ok(errors.some((error) => error.startsWith(`${file}: Firebase Performance leftover`) && error.includes(residue)), errors.join('\n'));
+  });
+}
+
+test('comments about Performance are not leftovers, and Crashlytics setup stays required', (t) => {
   const app = fixture(t);
-  app.write('android/app/build.gradle', fs.readFileSync(path.join(app.directory, 'android/app/build.gradle'), 'utf8')
-    + "\n// apply plugin: 'com.google.firebase.firebase-perf'");
+  app.append('android/build.gradle', "\n// classpath 'com.google.firebase:perf-plugin:2.0.2' was removed");
+  app.append('android/app/build.gradle', "\n/* apply plugin: 'com.google.firebase.firebase-perf' */\n// firebase-perf: removed");
+  app.append('android/variables.gradle', '\n// firebasePerfVersion is gone');
+  app.write('android/app/src/main/AndroidManifest.xml',
+    '<manifest><application><!-- firebase_performance_collection_enabled removed --></application></manifest>');
+  app.append('ios/App/Podfile', "\n  # pod 'FirebasePerformance', '12.19.0'");
   assert.deepEqual(app.verify().errors, []);
+  const gradle = fs.readFileSync(path.join(app.directory, 'android/app/build.gradle'), 'utf8');
+  app.write('android/app/build.gradle', gradle.replace("apply plugin: 'com.google.firebase.crashlytics'\n", ''));
+  app.write('ios/App/Podfile.lock', fs.readFileSync(path.join(app.directory, 'ios/App/Podfile.lock'), 'utf8').replace(/^ {2}- FirebaseCrashlytics .*\n/m, ''));
+  const errors = app.verify().errors;
+  assert.ok(errors.some((error) => error.includes('com.google.firebase.crashlytics is not applied')), errors.join('\n'));
+  assert.ok(errors.some((error) => error.includes('FirebaseCrashlytics must resolve')), errors.join('\n'));
 });
 
 test('a failed patch check is fatal, including at the CLI exit boundary', (t) => {
