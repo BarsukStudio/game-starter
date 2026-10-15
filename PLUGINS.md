@@ -17,7 +17,7 @@ generic installer for arbitrary Xcode projects, Kotlin DSL, SPM or Electron/Taur
 | `platform.dependencies`, `platform.devDependencies` | Every consumer of the current full platform template, including its web builds |
 | `android.dependencies`, `android.devDependencies` | Android target |
 | `ios.dependencies`, `ios.devDependencies` | iOS target |
-| `diagnostics.dependencies` | Optional Firebase diagnostics: Crashlytics, Performance and app configuration; Analytics belongs to `platform.dependencies` |
+| `diagnostics.dependencies` | Optional Firebase diagnostics: Crashlytics and app configuration; Analytics belongs to `platform.dependencies` |
 
 The current bridge imports the app-shell and ad adapters; even web builds of
 this template must resolve their npm packages. Disabling ads or providing an
@@ -28,7 +28,7 @@ packages is outside this recipe.
 
 Both native advertising variants bind the revenue collector and import Firebase
 Analytics by default. Analytics therefore belongs to the base dependency set.
-Crashlytics/Performance remain optional: the base template never imports
+Crashlytics remains optional: the base template never imports
 `diagnostics.js`. A consumer without diagnostics omits that file, its test and
 the two lifecycle edits below. Do not rely on `isNative` to avoid installing an
 imported dependency; the bundler still resolves it.
@@ -150,7 +150,7 @@ Firebase Analytics also needs native app configuration: on Android apply Google
 Services and keep a matching `android/app/google-services.json`; on iOS bundle the
 matching `GoogleService-Info.plist`, initialize FirebaseCore and add the Analytics
 subspec described below. These steps apply to revenue collection even without
-Crashlytics/Performance. Native app registration and real event delivery are
+Crashlytics. Native app registration and real event delivery are
 consumer acceptance steps; the starter supplies no Firebase identity.
 
 ## 3. Optional Firebase diagnostics
@@ -167,18 +167,18 @@ After installing `diagnostics.dependencies`, copy:
 In `src/js/platform/index.js`, import `initializeDiagnostics` from
 `./diagnostics.js` and call it at the beginning of `createPlatformController()`.
 Keep the existing controller method list unchanged. In `native-shell.js`, import
-`finishBootstrapTrace` from `./diagnostics.js` and use:
+`markSplashHidden` from `./diagnostics.js` and use:
 
 ```js
 export async function hideSplashScreen() {
   await SplashScreen.hide();
-  finishBootstrapTrace();
+  markSplashHidden();
 }
 ```
 
-`js_bootstrap` ends at successful splash hiding; `js_duration_ms` measures the JS
-elapsed time. Neither measures first paint, ad readiness or gameplay FPS. JS
-errors are non-fatal reports with bounded deduplication; native SDK failures are
+The Crashlytics key `game_stage` reads `js_bootstrap` until the splash is hidden
+successfully and `splash_hidden` after, so a report shows which side of startup
+it came from. JS errors are non-fatal reports with bounded deduplication; native SDK failures are
 consumed so diagnostics do not block gameplay. Web/portal execution sends no
 diagnostic calls through this module.
 
@@ -198,7 +198,6 @@ handlers. Keep the real controller under test; do not replace it with a stub.
    firebaseCommonVersion = '<diagnostics.androidVariables.firebaseCommonVersion>'
    firebaseAnalyticsVersion = '<diagnostics.androidVariables.firebaseAnalyticsVersion>'
    firebaseCrashlyticsVersion = '<diagnostics.androidVariables.firebaseCrashlyticsVersion>'
-   firebasePerfVersion = '<diagnostics.androidVariables.firebasePerfVersion>'
    ```
 
 3. Merge `diagnostics.androidClasspaths` into `android/build.gradle`'s buildscript
@@ -206,7 +205,6 @@ handlers. Keep the real controller under test; do not replace it with a stub.
 
    ```gradle
    classpath 'com.google.firebase:firebase-crashlytics-gradle:<diagnostics.androidClasspaths.com.google.firebase:firebase-crashlytics-gradle>'
-   classpath 'com.google.firebase:perf-plugin:<diagnostics.androidClasspaths.com.google.firebase:perf-plugin>'
    ```
 
    Google Services is already listed under `android.classpaths`; retain it.
@@ -215,7 +213,6 @@ handlers. Keep the real controller under test; do not replace it with a stub.
    ```gradle
    apply plugin: 'com.google.gms.google-services'
    apply plugin: 'com.google.firebase.crashlytics'
-   apply plugin: 'com.google.firebase.firebase-perf'
    ```
 
    Avoid duplicating an existing application of a plugin. Retain the normal
@@ -225,14 +222,11 @@ handlers. Keep the real controller under test; do not replace it with a stub.
    implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlyticsVersion"
    ```
 
-   The Capacitor plugins own the Java Crashlytics and Performance SDK dependencies.
-   Remove obsolete direct declarations of those SDKs when migrating an existing
-   integration. NDK capture does not provide symbols for third-party `.so` files;
+   The Capacitor plugin owns the Java Crashlytics SDK dependency. Remove obsolete
+   direct declarations of it when migrating an existing integration. NDK capture does not provide symbols for third-party `.so` files;
    symbolication needs their actual unstripped symbols and separate upload setup.
 5. Keep collection enabled for this profile. Check that AndroidManifest metadata
-   or application code does not disable Crashlytics/Performance. The Performance
-   Gradle plugin adds HTTP instrumentation; upgrading from SDK-only monitoring
-   changes what is collected.
+   or application code does not disable Crashlytics.
 
 ### iOS (CocoaPods)
 
@@ -247,9 +241,9 @@ handlers. Keep the real controller under test; do not replace it with a stub.
    pod 'CapacitorFirebaseAnalytics/Analytics', :path => '../../node_modules/@capacitor-firebase/analytics'
    ```
 
-   The reference `Podfile.lock` resolves Firebase Crashlytics/Performance to
-   `diagnostics.iosSdkVersion`. For reproducible fresh installation, pin those
-   two native pods to that value in `target 'App'`, outside `capacitor_pods`.
+   The reference `Podfile.lock` resolves Firebase Crashlytics to
+   `diagnostics.iosSdkVersion`. For reproducible fresh installation, pin that
+   native pod to that value in `target 'App'`, outside `capacitor_pods`.
    Keep `Podfile.lock`; review dependency drift instead of blindly updating pods.
 3. In the existing `AppDelegate.swift`, add `import FirebaseCore` and call
    `FirebaseApp.configure()` once in `application(_:didFinishLaunchingWithOptions:)`,
@@ -315,7 +309,7 @@ each game. Once the starter artifact includes this tool, add these npm scripts:
 Choose `--targets web`, `android`, `ios` or a comma-separated combination. Targets
 are explicit: a missing native folder must fail, not silently turn into a web-only
 check. Omit `--diagnostics` and the diagnostic test for a consumer without Firebase.
-If either diagnostic plugin is declared, the verifier also checks the full bundle.
+If the Crashlytics plugin is declared, the verifier also checks the full bundle.
 Legacy ConsentSignals checks activate when a native adapter imports `../consent-signals.js`, or with
 `--consent`. For native targets they require Android registration before
 `super.onCreate`, the iOS bridge methods and initial storyboard controller,
@@ -328,8 +322,10 @@ with the same flags **from the game root**, without repinning the game.
 
 The tool verifies reference pins, lockfile/installed metadata, documented native
 settings, registrations, Firebase identity, bundle inclusion, dSYM configuration,
-JS wiring and the existing ad patch runner's exit status. Missing inputs and failed
-checks exit nonzero. iOS inspection uses macOS `plutil` to read the Xcode/plist
+JS wiring and the existing ad patch runner's exit status. It also fails while any
+piece of Firebase Performance remains: the npm package or its lockfile entry, the
+Android Gradle plugin, the iOS pods or either generated registration. Missing
+inputs and failed checks exit nonzero. iOS inspection uses macOS `plutil` to read the Xcode/plist
 structure; it does not infer build success by finding a script name in text.
 It is a source/metadata preflight, not a Gradle/Swift interpreter, dependency
 integrity rehash, signing/certificate audit, mediation validator or network probe.
@@ -545,7 +541,7 @@ never grants `analytics_storage`, `ad_storage`, `ad_user_data` or
 CAS `obtained` means completion, not permission for personalized advertising.
 Native CMP/Firebase propagation must be verified separately for acceptance,
 refusal, withdrawal and restart on each platform; iOS remains a device gate.
-Crashlytics/Performance bootstrap diagnostics remain separate.
+Crashlytics bootstrap diagnostics remain separate.
 
 In AndroidManifest.xml, set `firebase_analytics_collection_enabled=true`,
 `google_analytics_tcf_data_enabled=true`. For an explicitly `notChildren` CAS

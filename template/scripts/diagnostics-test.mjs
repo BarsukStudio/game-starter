@@ -11,20 +11,18 @@ const moduleUrl = [
 assert.ok(moduleUrl, 'Copy diagnostics.js to src/js/platform before running this test.');
 const source = fs.readFileSync(moduleUrl, 'utf8');
 
-function setup({ native = true, startTrace, fail = false } = {}) {
+function setup({ native = true, fail = false } = {}) {
   const calls = [];
   const listeners = new Map();
   const sdk = (name) => new Proxy({}, {
     get: (_, method) => async (options) => {
       calls.push({ sdk: name, method, options });
       if (fail) throw new Error('SDK unavailable');
-      if (method === 'startTrace' && startTrace) await startTrace;
     },
   });
   const context = {
-    FirebaseCrashlytics: sdk('crash'), FirebasePerformance: sdk('perf'),
+    FirebaseCrashlytics: sdk('crash'),
     isNative: native, nativePlatform: 'android',
-    performance: { now: () => 100 },
     console: { warn() {} },
     window: { addEventListener: (name, listener) => listeners.set(name, listener) },
   };
@@ -38,7 +36,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 test('web and portals do not install handlers or call native diagnostics', () => {
   const app = setup({ native: false });
   app.initializeDiagnostics();
-  app.finishBootstrapTrace();
+  app.markSplashHidden();
   assert.equal(app.calls.length, 0);
   assert.equal(app.listeners.size, 0);
 });
@@ -59,7 +57,7 @@ test('native initialization is idempotent and reports both WebView stack formats
   assert.equal(reports[0].options.stacktrace[0].functionName, 'restore');
   assert.equal(reports[1].options.stacktrace[0].fileName, 'capacitor://localhost/assets/main.js');
   assert.equal(reports[1].options.stacktrace[0].functionName, 'initialize');
-  assert.equal(app.calls.filter((call) => call.method === 'startTrace').length, 1);
+  assert.equal(app.calls.filter((call) => call.method === 'setCustomKey').length, 2);
 });
 
 test('error events without a stack retain location; string rejections are supported', () => {
@@ -82,25 +80,22 @@ test('repeated errors are deduplicated and distinct reports are bounded', () => 
   assert.equal(app.calls.filter((call) => call.method === 'recordException').length, 8);
 });
 
-test('trace stops exactly once after a delayed start, preserving the JS duration', async () => {
-  let resolveStart;
-  const app = setup({ startTrace: new Promise((resolve) => { resolveStart = resolve; }) });
+test('splash hiding moves the crash stage exactly once, only after initialization', () => {
+  const app = setup();
+  app.markSplashHidden();
+  assert.equal(app.calls.length, 0);
   app.initializeDiagnostics();
-  app.performance.now = () => 550;
-  app.finishBootstrapTrace();
-  app.finishBootstrapTrace();
-  assert.equal(app.calls.filter((call) => call.method === 'stopTrace').length, 0);
-  resolveStart();
-  await flush();
-  assert.equal(app.calls.find((call) => call.method === 'putMetric').options.num, 450);
-  assert.equal(app.calls.filter((call) => call.method === 'stopTrace').length, 1);
+  app.markSplashHidden();
+  app.markSplashHidden();
+  const stages = app.calls.filter((call) => call.options?.key === 'game_stage').map((call) => call.options.value);
+  assert.deepEqual(stages, ['js_bootstrap', 'splash_hidden']);
 });
 
 test('SDK failures are consumed without blocking startup or creating unhandled rejections', async () => {
   const app = setup({ fail: true });
   app.initializeDiagnostics();
   app.listeners.get('unhandledrejection')({ reason: 'game failure' });
-  app.finishBootstrapTrace();
+  app.markSplashHidden();
   await flush();
-  assert.equal(app.calls.filter((call) => call.method === 'stopTrace').length, 0);
+  assert.equal(app.calls.filter((call) => call.method === 'recordException').length, 1);
 });

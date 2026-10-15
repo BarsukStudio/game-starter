@@ -9,7 +9,18 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.29**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.30**.
+Alpha.30 removes Firebase Performance from the platform. Its data went unread,
+and removing an optional SDK lets its effect on ANRs be measured. The template's
+`diagnostics.js` keeps Crashlytics — error reports and the `game_stage` key — and
+drops the `js_bootstrap` trace; `finishBootstrapTrace` is renamed
+`markSplashHidden`, since it now only moves `game_stage` to `splash_hidden`.
+`testing/native-ads.mjs` no longer exports a `FirebasePerformance` stand-in.
+The plugin verifier now fails while any piece of Performance remains. A consumer
+removes the npm package, the `perf-plugin` classpath, the `firebase-perf` Gradle
+plugin, `firebasePerfVersion`, Performance collection settings in
+`AndroidManifest.xml` and `Info.plist`, then syncs both platforms and reinstalls
+pods. The contract is unchanged.
 Alpha.29 accepts the runtime 0.5.0 source revision, which adds
 `rewarded-request-context`, and removes the template's own copy of that
 coordinator: a game now imports it from the runtime and keeps its placements and

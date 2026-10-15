@@ -1,15 +1,11 @@
-// Native diagnostics only. Web/portal builds never call either Firebase SDK.
+// Native diagnostics only. Web/portal builds never call Crashlytics.
 import { FirebaseCrashlytics } from '@capacitor-firebase/crashlytics';
-import { FirebasePerformance } from '@capacitor-firebase/performance';
 import { isNative, nativePlatform } from './env.js';
 
-const BOOT_TRACE = 'js_bootstrap';
 const MAX_REPORTS = 8;
 const reported = new Set();
 let initialized = false;
-let bootFinished = false;
-let bootStartedAt = 0;
-let bootTrace;
+let splashHidden = false;
 
 // Every SDK rejection is consumed here: diagnostics must not create another
 // unhandled rejection or prevent the game from starting.
@@ -58,7 +54,6 @@ function reportError(error, source, event) {
 export function initializeDiagnostics() {
   if (!isNative || initialized) return;
   initialized = true;
-  bootStartedAt = performance.now();
   window.addEventListener('error', (event) => {
     // Resource-load failures are not JavaScript exceptions.
     if (event.error || event.message) reportError(event.error, 'js_error', event);
@@ -72,24 +67,14 @@ export function initializeDiagnostics() {
   void callSdk(FirebaseCrashlytics, 'setCustomKey', {
     key: 'game_stage', value: 'js_bootstrap', type: 'string',
   });
-  bootTrace = callSdk(FirebasePerformance, 'startTrace', { traceName: BOOT_TRACE });
 }
 
-// The splash is hidden once the game has reached platform initialization.
-// This measures that boundary, not ad readiness or the first rendered frame.
-export function finishBootstrapTrace() {
-  if (!isNative || !initialized || bootFinished) return;
-  bootFinished = true;
-  const duration = Math.round(performance.now() - bootStartedAt);
+// The splash is hidden once the game has reached platform initialization, so a
+// crash report can tell a startup failure from one during play.
+export function markSplashHidden() {
+  if (!isNative || !initialized || splashHidden) return;
+  splashHidden = true;
   void callSdk(FirebaseCrashlytics, 'setCustomKey', {
     key: 'game_stage', value: 'splash_hidden', type: 'string',
   });
-  void (async () => {
-    if (!await bootTrace) return;
-    // Keep the JS duration even if scheduling on the native bridge was delayed.
-    await callSdk(FirebasePerformance, 'putMetric', {
-      traceName: BOOT_TRACE, metricName: 'js_duration_ms', num: duration,
-    });
-    await callSdk(FirebasePerformance, 'stopTrace', { traceName: BOOT_TRACE });
-  })();
 }

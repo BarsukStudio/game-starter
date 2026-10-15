@@ -20,8 +20,11 @@ const firebasePlugins = {
   '@capacitor-firebase/app': ['CapacitorFirebaseApp', 'FirebaseAppPlugin'],
   '@capacitor-firebase/analytics': ['CapacitorFirebaseAnalytics', 'FirebaseAnalyticsPlugin'],
   '@capacitor-firebase/crashlytics': ['CapacitorFirebaseCrashlytics', 'FirebaseCrashlyticsPlugin'],
-  '@capacitor-firebase/performance': ['CapacitorFirebasePerformance', 'FirebasePerformancePlugin'],
 };
+// Firebase Performance left the platform in alpha.30: its data went unread, and
+// removing an optional SDK lets its effect on ANRs be measured. A consumer that
+// still carries any piece of it has not finished that removal.
+const performancePackage = '@capacitor-firebase/performance';
 const dsymInputs = [
   '${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}',
   '${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}',
@@ -73,7 +76,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
   const lock = json('package-lock.json');
   const installedLock = json('node_modules/.package-lock.json');
   const declared = { ...pkg.dependencies, ...pkg.devDependencies };
-  diagnostics ||= Boolean(declared['@capacitor-firebase/crashlytics'] || declared['@capacitor-firebase/performance']);
+  diagnostics ||= Boolean(declared['@capacitor-firebase/crashlytics']);
+  check(!declared[performancePackage] && !lock.packages?.[`node_modules/${performancePackage}`],
+    `${performancePackage}: Firebase Performance is no longer part of the platform; uninstall it.`);
   const groups = [manifest.platform, ...targets.filter((target) => target !== 'web').map((target) => manifest[target])];
   if (diagnostics) groups.push(manifest.diagnostics);
   for (const section of ['dependencies', 'devDependencies']) {
@@ -166,8 +171,8 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     const shell = code(read('src/js/platform/native-shell.js'));
     check(/import\s*\{\s*initializeDiagnostics\s*\}\s*from\s*['"]\.\/diagnostics\.js['"]/.test(controller)
       && /initializeDiagnostics\(\)/.test(controller), 'Diagnostics: initializeDiagnostics must be imported and called by the controller.');
-    check(/import\s*\{\s*finishBootstrapTrace\s*\}\s*from\s*['"]\.\/diagnostics\.js['"]/.test(shell)
-      && /await SplashScreen\.hide\(\);\s*finishBootstrapTrace\(\)/.test(shell), 'Diagnostics: finishBootstrapTrace must run after SplashScreen.hide succeeds.');
+    check(/import\s*\{\s*markSplashHidden\s*\}\s*from\s*['"]\.\/diagnostics\.js['"]/.test(shell)
+      && /await SplashScreen\.hide\(\);\s*markSplashHidden\(\)/.test(shell), 'Diagnostics: markSplashHidden must run after SplashScreen.hide succeeds.');
   }
 
   if (targets.includes('android')) {
@@ -176,6 +181,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     const variables = code(read('android/variables.gradle'));
     const generated = code(read('android/app/capacitor.build.gradle'));
     const registry = json('android/app/src/main/assets/capacitor.plugins.json');
+    check(!/['"]com\.google\.firebase:perf-plugin:/.test(rootGradle) && !/['"]com\.google\.firebase\.firebase-perf['"]/.test(appGradle)
+      && !(Array.isArray(registry) && registry.some((plugin) => plugin.pkg === performancePackage)),
+      'Android: Firebase Performance Gradle plugin or registration remains; remove it and sync.');
     const classpaths = { ...manifest.android.classpaths, ...(cas ? { 'com.cleveradssolutions:gradle-plugin': manifest.advertising.cas.sdkVersion } : {}), ...(diagnostics ? manifest.diagnostics.androidClasspaths : {}) };
     for (const [coordinate, version] of Object.entries(classpaths)) {
       check(new RegExp(`\\bclasspath\\s+['"]${escape(coordinate)}:${escape(version)}['"]`).test(rootGradle), `Android: missing active classpath ${coordinate}:${version}.`);
@@ -228,7 +236,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       }
     }
     if (diagnostics) {
-      for (const plugin of ['com.google.gms.google-services', 'com.google.firebase.crashlytics', 'com.google.firebase.firebase-perf']) {
+      for (const plugin of ['com.google.gms.google-services', 'com.google.firebase.crashlytics']) {
         check(new RegExp(`^\\s*apply plugin:\\s*['"]${escape(plugin)}['"]`, 'm').test(appGradle), `Android: ${plugin} is not applied.`);
       }
       check(/implementation\s+["']com\.google\.firebase:firebase-crashlytics-ndk:\$firebaseCrashlyticsVersion["']/.test(appGradle), 'Android: NDK capture must use the same firebaseCrashlyticsVersion as Crashlytics.');
@@ -238,10 +246,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         && Array.isArray(firebase.client) && firebase.client.some((client) => client.client_info?.android_client_info?.package_name === appId
           && client.client_info?.mobilesdk_app_id?.includes(':android:')), 'Android: google-services.json must contain a Firebase client matching applicationId.');
       const androidManifest = read('android/app/src/main/AndroidManifest.xml').replace(/<!--[\s\S]*?-->/g, '');
-      for (const key of ['firebase_crashlytics_collection_enabled', 'firebase_performance_collection_enabled', 'firebase_performance_collection_deactivated']) {
-        const tag = [...androidManifest.matchAll(/<meta-data\b[^>]*>/g)].map(([value]) => value).find((value) => value.includes(`"${key}"`));
-        check(!tag || !tag.includes(`android:value="${key.endsWith('deactivated') ? 'true' : 'false'}"`), `Android: ${key} disables diagnostics.`);
-      }
+      const tag = [...androidManifest.matchAll(/<meta-data\b[^>]*>/g)].map(([value]) => value)
+        .find((value) => value.includes('"firebase_crashlytics_collection_enabled"'));
+      check(!tag || !tag.includes('android:value="false"'), 'Android: firebase_crashlytics_collection_enabled disables diagnostics.');
     }
   }
 
@@ -251,6 +258,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     check(podLock === read('ios/App/Pods/Manifest.lock'), 'iOS: Pods are out of sync with Podfile.lock.');
     check(new RegExp(`platform\\s*:ios,\\s*['"]${escape(manifest.ios.deploymentTarget)}['"]`).test(podfile), `iOS: Podfile deployment target must be ${manifest.ios.deploymentTarget}.`);
     const registry = json('ios/App/App/capacitor.config.json');
+    check(!/^\s*pod\s+['"]CapacitorFirebasePerformance['"]/m.test(podfile) && !/^  - (?:Capacitor)?FirebasePerformance\b/m.test(podLock)
+      && !registry.packageClassList?.includes('FirebasePerformancePlugin'),
+      'iOS: Firebase Performance pods or registration remain; remove them, sync and install pods.');
     for (const [name, [pod, className]] of Object.entries(plugins)) {
       check(new RegExp(`^\\s*pod\\s+['"]${pod}['"]`, 'm').test(podfile), `iOS: ${pod} missing from Podfile.`);
       const expectedVersion = json(`node_modules/${name}/package.json`).version;
@@ -346,12 +356,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         const ref = objects[objects[id]?.fileRef];
         return ref?.path === 'GoogleService-Info.plist';
       })), 'iOS: GoogleService-Info.plist must be in App Copy Bundle Resources.');
-      for (const pod of ['FirebaseCrashlytics', 'FirebasePerformance']) {
-        check(new RegExp(`^  - ${pod} \\(${escape(manifest.diagnostics.iosSdkVersion)}\\)`, 'm').test(podLock), `iOS: ${pod} must resolve to ${manifest.diagnostics.iosSdkVersion}.`);
-      }
+      check(new RegExp(`^  - FirebaseCrashlytics \\(${escape(manifest.diagnostics.iosSdkVersion)}\\)`, 'm').test(podLock), `iOS: FirebaseCrashlytics must resolve to ${manifest.diagnostics.iosSdkVersion}.`);
       const info = plist('ios/App/App/Info.plist');
-      check(info.FirebaseCrashlyticsCollectionEnabled !== false && info.firebase_performance_collection_enabled !== false
-        && info.firebase_performance_collection_deactivated !== true, 'iOS: Info.plist disables diagnostic collection.');
+      check(info.FirebaseCrashlyticsCollectionEnabled !== false, 'iOS: Info.plist disables diagnostic collection.');
       check(settings.length > 0 && settings.every((config) => config.DEBUG_INFORMATION_FORMAT === 'dwarf-with-dsym'), 'iOS: every App configuration must generate DWARF with dSYM.');
       const phase = phases.at(-1);
       check(phase?.isa === 'PBXShellScriptBuildPhase' && code(phase.shellScript ?? '').includes('"${PODS_ROOT}/FirebaseCrashlytics/run"')

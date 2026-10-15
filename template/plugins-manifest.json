@@ -48,18 +48,15 @@
     "dependencies": {
       "@capacitor-firebase/app": "8.5.2",
       "@capacitor-firebase/crashlytics": "8.5.2",
-      "@capacitor-firebase/performance": "8.5.2",
       "firebase": "12.19.0"
     },
     "androidClasspaths": {
-      "com.google.firebase:firebase-crashlytics-gradle": "3.0.8",
-      "com.google.firebase:perf-plugin": "2.0.2"
+      "com.google.firebase:firebase-crashlytics-gradle": "3.0.8"
     },
     "androidVariables": {
       "firebaseCommonVersion": "22.2.1",
       "firebaseAnalyticsVersion": "23.2.0",
-      "firebaseCrashlyticsVersion": "20.1.1",
-      "firebasePerfVersion": "22.0.6"
+      "firebaseCrashlyticsVersion": "20.1.1"
     },
     "iosSdkVersion": "12.19.0"
   },

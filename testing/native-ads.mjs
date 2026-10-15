@@ -103,4 +103,3 @@ export const ads = {
 };
 
 export const FirebaseCrashlytics = { async setCustomKey() {}, async recordException() {} };
-export const FirebasePerformance = { async startTrace() {}, async stopTrace() {}, async putMetric() {} };

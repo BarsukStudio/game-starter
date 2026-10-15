@@ -49,9 +49,8 @@ export const TEMPLATE_TREES = Object.freeze({
       '@capacitor/splash-screen',
       // Native revenue observations use Analytics in both advertising variants.
       '@capacitor-firebase/analytics',
-      // Only the opt-in diagnostics module imports these.
+      // Only the opt-in diagnostics module imports this.
       '@capacitor-firebase/crashlytics',
-      '@capacitor-firebase/performance',
       'capacitor-plugin-cdv-purchase',
       'capacitor-plugin-yandex-ads',
     ]),

@@ -45,7 +45,6 @@ function fixture(t, { diagnostics = true, purchasePin } = {}) {
     ...(diagnostics ? {
       '@capacitor-firebase/app': ['CapacitorFirebaseApp', 'FirebaseAppPlugin'],
       '@capacitor-firebase/crashlytics': ['CapacitorFirebaseCrashlytics', 'FirebaseCrashlyticsPlugin'],
-      '@capacitor-firebase/performance': ['CapacitorFirebasePerformance', 'FirebasePerformancePlugin'],
     } : {}),
   };
   write('android/build.gradle', Object.entries({ ...manifest.android.classpaths, ...(diagnostics ? manifest.diagnostics.androidClasspaths : {}) })
@@ -55,7 +54,6 @@ function fixture(t, { diagnostics = true, purchasePin } = {}) {
   write('android/app/build.gradle', `applicationId 'test.example'
 apply plugin: 'com.google.gms.google-services'
 apply plugin: 'com.google.firebase.crashlytics'
-apply plugin: 'com.google.firebase.firebase-perf'
 implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlyticsVersion"
 `);
   write('android/app/capacitor.build.gradle', Object.keys(plugins).map((name) => `implementation project(':${name.replace(/^@/, '').replace('/', '-')}')`).join('\n'));
@@ -64,7 +62,7 @@ implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlytic
   write('android/app/google-services.json', { project_info: { project_id: 'test' }, client: [{ client_info: { mobilesdk_app_id: '1:1:android:test', android_client_info: { package_name: 'test.example' } } }] });
   write('ios/App/Podfile', `platform :ios, '${manifest.ios.deploymentTarget}'\n${Object.values(plugins).map(([pod]) => `pod '${pod}'`).join('\n')}`);
   const lock = Object.entries(plugins).map(([name, [pod]]) => `  - ${pod} (${entries[`node_modules/${name}`].version}):`).join('\n')
-    + `\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n  - FirebasePerformance (${manifest.diagnostics.iosSdkVersion}):\n`;
+    + `\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n`;
   write('ios/App/Podfile.lock', lock);
   write('ios/App/Pods/Manifest.lock', lock);
   write('ios/App/App/capacitor.config.json', { packageClassList: Object.values(plugins).map(([, name]) => name) });
@@ -100,7 +98,7 @@ implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlytic
   write('scripts/patch-native-ad-events.mjs', 'process.exit(0);');
   write('src/js/platform/diagnostics.js', '// fixture transport');
   write('src/js/platform/index.js', "import { initializeDiagnostics } from './diagnostics.js';\ninitializeDiagnostics();");
-  write('src/js/platform/native-shell.js', "import { finishBootstrapTrace } from './diagnostics.js';\nawait SplashScreen.hide();\nfinishBootstrapTrace();");
+  write('src/js/platform/native-shell.js', "import { markSplashHidden } from './diagnostics.js';\nawait SplashScreen.hide();\nmarkSplashHidden();");
   const run = (command, args, options) => command === 'plutil'
     ? { status: 0, stdout: fs.readFileSync(args.at(-1), 'utf8') }
     : spawnSync(command, args, options);
@@ -136,9 +134,9 @@ function casFixture(t) {
     '@capacitor/app': ['CapacitorApp', 'AppPlugin'],
     '@capacitor/splash-screen': ['CapacitorSplashScreen', 'SplashScreenPlugin'],
     'capacitor-plugin-cdv-purchase': ['CapacitorPluginCdvPurchase', 'PurchasePlugin'],
-    ...Object.fromEntries(['app', 'analytics', 'crashlytics', 'performance'].map(key => {
+    ...Object.fromEntries(['app', 'analytics', 'crashlytics'].map(key => {
       const names = { app: ['CapacitorFirebaseApp', 'FirebaseAppPlugin'], analytics: ['CapacitorFirebaseAnalytics', 'FirebaseAnalyticsPlugin'],
-        crashlytics: ['CapacitorFirebaseCrashlytics', 'FirebaseCrashlyticsPlugin'], performance: ['CapacitorFirebasePerformance', 'FirebasePerformancePlugin'] };
+        crashlytics: ['CapacitorFirebaseCrashlytics', 'FirebaseCrashlyticsPlugin'] };
       return [`@capacitor-firebase/${key}`, names[key]];
     })),
   };
@@ -149,7 +147,6 @@ function casFixture(t) {
   app.write('android/app/build.gradle', `applicationId 'test.example'
 apply plugin: 'com.google.gms.google-services'
 apply plugin: 'com.google.firebase.crashlytics'
-apply plugin: 'com.google.firebase.firebase-perf'
 apply plugin: 'com.cleveradssolutions.gradle-plugin'
 includeOptimalAds = true
 implementation "com.google.firebase:firebase-analytics:$firebaseAnalyticsVersion"
@@ -170,7 +167,7 @@ platform :ios, '${manifest.ios.deploymentTarget}'
 ${Object.values(plugins).map(([pod]) => `pod '${pod}'`).join('\n')}
 pod 'CleverAdsSolutions-SDK/Optimal', '${manifest.advertising.cas.sdkVersion}'`);
   const podLock = `  - CleverAdsSolutions-Base (${manifest.advertising.cas.sdkVersion}):\n` + Object.entries(plugins).map(([name, [pod]]) => `  - ${pod} (${lock.packages[`node_modules/${name}`].version}):`).join('\n')
-    + `\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n  - FirebasePerformance (${manifest.diagnostics.iosSdkVersion}):\n`;
+    + `\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n`;
   app.write('ios/App/Podfile.lock', podLock); app.write('ios/App/Pods/Manifest.lock', podLock);
   app.write('ios/App/App/capacitor.config.json', { packageClassList: Object.values(plugins).map(([, name]) => name) });
   app.write('src/js/platform/bridge.js', "import './ads/native-cas.js';");
@@ -327,15 +324,43 @@ test('an npm declaration without an installed plugin fails', (t) => {
   assert.ok(app.verify().errors.some((error) => error.includes('@capacitor-firebase/crashlytics')));
 });
 
-test('missing or commented Performance setup fails on Android and iOS', (t) => {
+test('any remaining piece of Firebase Performance fails on npm, Android and iOS', (t) => {
+  const name = '@capacitor-firebase/performance';
+  const leftovers = {
+    npm: (app) => {
+      const pkg = app.read('package.json'); pkg.dependencies[name] = '8.5.2'; app.write('package.json', pkg);
+    },
+    lockfile: (app) => {
+      const lock = app.read('package-lock.json'); lock.packages[`node_modules/${name}`] = { version: '8.5.2' }; app.write('package-lock.json', lock);
+    },
+    classpath: (app) => app.write('android/build.gradle', fs.readFileSync(path.join(app.directory, 'android/build.gradle'), 'utf8')
+      + "\nclasspath 'com.google.firebase:perf-plugin:2.0.2'"),
+    'Gradle plugin': (app) => app.write('android/app/build.gradle', fs.readFileSync(path.join(app.directory, 'android/app/build.gradle'), 'utf8')
+      + "\napply plugin: 'com.google.firebase.firebase-perf'"),
+    'Android registration': (app) => {
+      const registry = app.read('android/app/src/main/assets/capacitor.plugins.json'); registry.push({ pkg: name });
+      app.write('android/app/src/main/assets/capacitor.plugins.json', registry);
+    },
+    Podfile: (app) => app.write('ios/App/Podfile', fs.readFileSync(path.join(app.directory, 'ios/App/Podfile'), 'utf8')
+      + "\npod 'CapacitorFirebasePerformance'"),
+    'Podfile.lock': (app) => {
+      const lock = fs.readFileSync(path.join(app.directory, 'ios/App/Podfile.lock'), 'utf8') + '  - FirebasePerformance (12.19.0):\n';
+      app.write('ios/App/Podfile.lock', lock); app.write('ios/App/Pods/Manifest.lock', lock);
+    },
+    'iOS registration': (app) => {
+      const registry = app.read('ios/App/App/capacitor.config.json'); registry.packageClassList.push('FirebasePerformancePlugin');
+      app.write('ios/App/App/capacitor.config.json', registry);
+    },
+  };
+  for (const [leftover, add] of Object.entries(leftovers)) {
+    const app = fixture(t); add(app);
+    assert.ok(app.verify().errors.some((error) => /Firebase Performance/.test(error)), leftover);
+  }
+  // Comments are not setup.
   const app = fixture(t);
-  app.write('android/build.gradle', '// classpath "com.google.firebase:perf-plugin:2.0.2"');
-  app.write('android/app/build.gradle', "// apply plugin: 'com.google.firebase.firebase-perf'");
-  app.write('ios/App/Podfile', "# pod 'CapacitorFirebasePerformance'");
-  const errors = app.verify().errors;
-  assert.ok(errors.some((error) => error.includes('perf-plugin')));
-  assert.ok(errors.some((error) => error.includes('firebase-perf is not applied')));
-  assert.ok(errors.some((error) => error.includes('CapacitorFirebasePerformance missing')));
+  app.write('android/app/build.gradle', fs.readFileSync(path.join(app.directory, 'android/app/build.gradle'), 'utf8')
+    + "\n// apply plugin: 'com.google.firebase.firebase-perf'");
+  assert.deepEqual(app.verify().errors, []);
 });
 
 test('a failed patch check is fatal, including at the CLI exit boundary', (t) => {
@@ -397,7 +422,7 @@ test('skipped native sync is detected through generated registrations', (t) => {
 
 test('missing JS lifecycle wiring does not report a ready diagnostics installation', (t) => {
   const app = fixture(t); app.write('src/js/platform/index.js', '// initializeDiagnostics()');
-  app.write('src/js/platform/native-shell.js', '// finishBootstrapTrace()');
+  app.write('src/js/platform/native-shell.js', '// markSplashHidden()');
   assert.equal(app.verify().errors.filter((error) => error.startsWith('Diagnostics:')).length, 2);
 });
 
