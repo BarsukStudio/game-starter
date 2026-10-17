@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { exportTemplate } from '../tools/export-template.mjs';
 
-// Executes the exported policy module; only the native SDK and environment are
-// replaced. The same module is consumed by the game and fresh CAS exports.
-const source = fs.readFileSync(new URL('../template/variants/cas/platform/native-analytics.js', import.meta.url), 'utf8');
+// Executes the exported transport module; only the native SDK and environment
+// are replaced. Both native stacks export the same module.
+const source = fs.readFileSync(new URL('../template/platform/native-analytics.js', import.meta.url), 'utf8');
 let serial = 0;
 async function fixture({ native = true, enable = () => Promise.resolve(), log = () => Promise.resolve() } = {}) {
   const key = `__analyticsFixture${++serial}`;
@@ -55,4 +55,14 @@ test('fresh CAS export has no Analytics dependency on automatic or manual consen
   const adapter = fs.readFileSync(path.join(dir, 'src/js/platform/ads/native-cas.js'), 'utf8');
   assert.doesNotMatch(adapter, /activateNativeAnalytics|setEnabled|setConsent/);
   assert.equal(fs.readFileSync(path.join(dir, 'src/js/platform/native-analytics.js'), 'utf8'), source);
+});
+
+test('both native stacks export the shared transport and the game event channel', t => {
+  for (const nativeStack of ['admob', 'cas']) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'barsuk-analytics-export-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    exportTemplate({ nativeStack, out: dir });
+    assert.equal(fs.readFileSync(path.join(dir, 'src/js/platform/native-analytics.js'), 'utf8'), source, nativeStack);
+    assert.ok(fs.existsSync(path.join(dir, 'src/js/platform/game-event-channel.js')), nativeStack);
+  }
 });

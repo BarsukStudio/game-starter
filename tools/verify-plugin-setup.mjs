@@ -38,6 +38,62 @@ const escape = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const code = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*(?:\/\/|#).*$/gm, '');
 const normalizePath = (value) => value.replace(/\$\((\w+)\)/g, '${$1}');
 
+// Blanks comments and the bodies of strings, template literals and regex
+// literals, keeping every offset, so a pattern on `code` can only match code and
+// a quote's offset finds the string's value. Not a parser: a template literal's
+// `${}` is blanked with it, and a regex right after a keyword such as `return`
+// reads as division. Neither occurs in the modules checked with it.
+export function scanModule(source) {
+  let code = '';
+  let previous = '';
+  const strings = new Map();
+  const blank = (text) => text.replace(/[^\n]/g, ' ');
+  for (let i = 0; i < source.length;) {
+    const char = source[i];
+    if (char === '/' && (source[i + 1] === '/' || source[i + 1] === '*')) {
+      const close = source[i + 1] === '/' ? source.indexOf('\n', i) : source.indexOf('*/', i + 2) + 2;
+      const end = close < (source[i + 1] === '/' ? 0 : 2) ? source.length : close;
+      code += blank(source.slice(i, end));
+      i = end;
+      continue;
+    }
+    const regex = char === '/' && !/[\w$)\]}]/.test(previous);
+    if (char === '"' || char === "'" || char === '`' || regex) {
+      let end = i + 1;
+      for (let inClass = false; end < source.length; end++) {
+        const next = source[end];
+        if (next === '\\') { end++; continue; }
+        if (next === '\n' && char !== '`') break;
+        if (!regex && next === char) break;
+        if (regex && next === '[') inClass = true;
+        else if (regex && next === ']') inClass = false;
+        else if (regex && next === '/' && !inClass) break;
+      }
+      end = Math.min(end, source.length - 1);
+      if (!regex) strings.set(i, source.slice(i + 1, end));
+      code += char + blank(source.slice(i + 1, end)) + source[end];
+      i = end + 1;
+      previous = 'a';
+      continue;
+    }
+    code += char;
+    if (!/\s/.test(char)) previous = char;
+    i++;
+  }
+  // `import x from '…'`, `import '…'`, `export … from '…'`; never `import(`.
+  const quoted = (match) => strings.get(match.index + match[0].length - 1);
+  const staticImports = [...code.matchAll(/(?:^|[;}\s])(?:import|export)\s*(?:[\w$*{},\s]*?\s*from\s*)?['"]/g)]
+    .map((match) => ({ specifier: quoted(match), names: (match[0].match(/\{([^}]*)\}/)?.[1] ?? '').split(',').map((name) => name.trim()) }));
+  // Only a lone string literal names the module: in `import('../' + name)` the
+  // first string is a fragment, not the path.
+  const dynamicImports = [...code.matchAll(/\bimport\s*\(\s*(['"]?)/g)].map((match) => {
+    const value = match[1] ? quoted(match) : undefined;
+    const after = match.index + match[0].length + (value ?? '').length + 1;
+    return { index: match.index, specifier: value !== undefined && /^\s*\)/.test(code.slice(after)) ? value : undefined };
+  });
+  return { code, staticImports, dynamicImports };
+}
+
 export function verifyPluginSetup({ root, targets, diagnostics = false, consent = false, run = spawnSync }) {
   const errors = [];
   let checks = 0;
@@ -135,8 +191,55 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     check(adapter.includes('applyConsentStatus(result.consentStatus)') && adapter.includes('applyConsentStatus(result.status)'),
       'CAS: automatic and manual CMP completion must update privacy availability.');
     check(!adapter.includes('activateNativeAnalytics'), 'CAS Analytics: collection must not depend on CMP completion.');
-    check(read('src/js/platform/native-analytics.js') === fs.readFileSync(new URL('../template/variants/cas/platform/native-analytics.js', import.meta.url), 'utf8'),
-      'CAS Analytics: event transport differs from the reviewed template.');
+  }
+  // Game events: the game declares names, fields and emit points in
+  // src/js/game-events.js; the channel and the native transport are the
+  // template's, byte for byte. Wiring is checked here; whether an event fires at
+  // the right moment is the game's own tests, and delivery is a device check.
+  const gameEvents = ['src/js/game-events.js', 'src/js/platform/game-event-channel.js'].some((file) => fs.existsSync(path.join(root, file)));
+  const sameAsTemplate = (file) => read(`src/js/platform/${file}`) === fs.readFileSync(new URL(`../template/platform/${file}`, import.meta.url), 'utf8');
+  if (cas || gameEvents) {
+    check(sameAsTemplate('native-analytics.js'), 'Native Analytics: event transport differs from the reviewed template.');
+  }
+  if (gameEvents) {
+    check(sameAsTemplate('game-event-channel.js'), 'Game events: channel differs from the reviewed template.');
+    const imports = (scanned, name, specifier) => scanned.staticImports.some((entry) => entry.specifier === specifier && entry.names.includes(name));
+    const registry = scanModule(read('src/js/game-events.js'));
+    check(imports(registry, 'createGameEventChannel', './platform/game-event-channel.js') && /\bcreateGameEventChannel\s*\(/.test(registry.code),
+      'Game events: src/js/game-events.js must declare its events through createGameEventChannel.');
+    // Node tests import the registry, and the web build must not reach an SDK through it.
+    check([...registry.staticImports, ...registry.dynamicImports].every(({ specifier }) => specifier?.startsWith('.')),
+      'Game events: src/js/game-events.js must not import a package.');
+    const entryFile = 'src/js/platform/bootstrap.js';
+    const entry = scanModule(read(entryFile));
+    // A top-level statement of its own: not inside a function, a condition or an expression.
+    const subscription = [...entry.code.matchAll(/\bsubscribeGameEvents\s*\(\s*logNativeAnalytics\s*\)/g)].find(({ index }) => {
+      const before = entry.code.slice(0, index);
+      const depth = (open, close) => before.split(open).length - before.split(close).length;
+      return depth('{', '}') === 0 && depth('(', ')') === 0 && /(?:^|[;}])\s*$/.test(before);
+    })?.index ?? -1;
+    // The bundler resolves `../main` to `../main.js`; this check does not, so a
+    // local module counts only when its specifier names an existing file.
+    const isFile = (file) => Boolean(fs.statSync(path.join(root, file), { throwIfNoEntry: false })?.isFile());
+    const local = (from, specifier) => path.posix.join(path.posix.dirname(from), specifier);
+    const gameLoads = entry.dynamicImports.map(({ specifier }) => specifier?.startsWith('.') && local(entryFile, specifier));
+    // Static imports run before any statement of the entry module, so a game
+    // module reachable through them emits before the subscription exists.
+    const reachable = new Set();
+    const unresolved = [];
+    (function walk(file) {
+      if (reachable.has(file)) return;
+      if (!isFile(file)) { unresolved.push(file); return; }
+      reachable.add(file);
+      for (const { specifier } of scanModule(fs.readFileSync(path.join(root, file), 'utf8')).staticImports) {
+        if (specifier?.startsWith('.')) walk(local(file, specifier));
+      }
+    })(entryFile);
+    check(imports(entry, 'logNativeAnalytics', './native-analytics.js') && imports(entry, 'subscribeGameEvents', '../game-events.js')
+      && subscription >= 0 && entry.dynamicImports.length > 0 && entry.dynamicImports[0].index > subscription
+      && gameLoads.every((file) => file && isFile(file) && !reachable.has(file)),
+    'Game events: src/js/platform/bootstrap.js must subscribe logNativeAnalytics in a top-level statement before it dynamically imports the game module by a literal path, and import that module nowhere statically.');
+    check(!unresolved.length, `Game events: name local modules by their file; cannot follow the static imports of bootstrap.js to ${unresolved.join(', ')}.`);
   }
   const revenueFile = 'src/js/platform/ads/ad-revenue.js';
   if (fs.existsSync(path.join(root, revenueFile))) {

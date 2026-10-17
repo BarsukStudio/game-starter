@@ -175,7 +175,7 @@ pod 'CleverAdsSolutions-SDK/Optimal', '${manifest.advertising.cas.sdkVersion}'`)
   app.write('src/js/platform/bridge.js', "import './ads/native-cas.js';");
   app.write('src/js/platform/ads/native-cas.js', fs.readFileSync(new URL('../template/variants/cas/platform/ads/native-cas.js', import.meta.url), 'utf8'));
   app.write('src/js/platform/ads/ad-revenue.js', fs.readFileSync(new URL('../template/variants/cas/platform/ads/ad-revenue.js', import.meta.url), 'utf8'));
-  app.write('src/js/platform/native-analytics.js', fs.readFileSync(new URL('../template/variants/cas/platform/native-analytics.js', import.meta.url), 'utf8'));
+  app.write('src/js/platform/native-analytics.js', fs.readFileSync(new URL('../template/platform/native-analytics.js', import.meta.url), 'utf8'));
   app.remove('scripts/patch-native-ad-events.mjs');
   return app;
 }
@@ -608,6 +608,135 @@ test('revenue preflight rejects collector drift and missing native ILRD transpor
   }
 });
 
+// The entry shape Gym2 and Miner ship: the subscription precedes the dynamic
+// import of the game module, so no event emitted while it loads is lost.
+const gameEventsEntry = `import { startGame } from './startup.js';
+import { logNativeAnalytics } from './native-analytics.js';
+import { subscribeGameEvents } from '../game-events.js';
+// Subscribed before the game module loads, so no early event is missed.
+subscribeGameEvents(logNativeAnalytics);
+void startGame(() => import('../main.js'), () => {}, () => {});`;
+const gameEventsRegistry = `import { createGameEventChannel } from './platform/game-event-channel.js';
+export const { emitGameEvent, subscribeGameEvents } = createGameEventChannel({ schemaRevision: 1, events: { game_ready: [] } });`;
+
+function gameEventsFixture(t) {
+  const app = fixture(t);
+  for (const file of ['native-analytics.js', 'game-event-channel.js']) {
+    app.write(`src/js/platform/${file}`, fs.readFileSync(new URL(`../template/platform/${file}`, import.meta.url), 'utf8'));
+  }
+  app.write('src/js/game-events.js', gameEventsRegistry);
+  app.write('src/js/platform/bootstrap.js', gameEventsEntry);
+  app.write('src/js/platform/startup.js', 'export function startGame() {}');
+  app.write('src/js/platform/env.js', 'export const isNative = true;');
+  app.write('src/js/main.js', "import { emitGameEvent } from './game-events.js';\nemitGameEvent('game_ready');");
+  return app;
+}
+
+test('game events pass with the template channel, transport and early subscription', (t) => {
+  assert.deepEqual(gameEventsFixture(t).verify().errors, []);
+  // Web-only verification checks the same JS wiring.
+  assert.deepEqual(gameEventsFixture(t).verify({ targets: ['web'], diagnostics: false }).errors, []);
+});
+
+test('game events reject a drifted channel or transport', (t) => {
+  const app = gameEventsFixture(t);
+  const channel = app.directory + '/src/js/platform/game-event-channel.js';
+  fs.writeFileSync(channel, fs.readFileSync(channel, 'utf8').replace("const PREFIX = 'bs_';", "const PREFIX = 'game_';"));
+  app.write('src/js/platform/native-analytics.js', "export function logNativeAnalytics(event) { FirebaseAnalytics.logEvent(event); }");
+  const errors = app.verify().errors.join('\n');
+  assert.match(errors, /Game events: channel differs/);
+  assert.match(errors, /Native Analytics: event transport differs/);
+});
+
+test('game events reject a registry with its own delivery or an SDK import', (t) => {
+  const app = gameEventsFixture(t);
+  // The shape every game carried before the channel moved into the starter.
+  app.write('src/js/game-events.js', `const listeners = new Set();
+// createGameEventChannel(...) is not called; this comment does not count.
+export function subscribeGameEvents(listener) { listeners.add(listener); }`);
+  assert.match(app.verify().errors.join('\n'), /must declare its events through createGameEventChannel/);
+  for (const registry of [`import { FirebaseAnalytics } from '@capacitor-firebase/analytics';\n${gameEventsRegistry}`,
+    `${gameEventsRegistry}\nimport('@capacitor/core');`]) {
+    app.write('src/js/game-events.js', registry);
+    assert.deepEqual(app.verify().errors, ['Game events: src/js/game-events.js must not import a package.']);
+  }
+});
+
+const entryError = 'Game events: src/js/platform/bootstrap.js must subscribe logNativeAnalytics in a top-level statement before it dynamically imports the game module by a literal path, and import that module nowhere statically.';
+
+test('game events accept equivalent wiring that a text search would misread', (t) => {
+  const app = gameEventsFixture(t);
+  // An async loader assigning the module, as Gym2 ships it, and a comment inside the factory call.
+  app.write('src/js/platform/bootstrap.js', gameEventsEntry.replace("() => import('../main.js')", "async () => { game = await import('../main.js'); }")
+    .replace('subscribeGameEvents(logNativeAnalytics);', 'subscribeGameEvents( logNativeAnalytics ); // before the game loads'));
+  app.write('src/js/game-events.js', gameEventsRegistry.replace('createGameEventChannel({', "createGameEventChannel /* schema */ ({\n  // product ids carry dots: /^[a-z.]+$/\n  valuePatterns: { product: /^[a-z0-9_.\\/-]+$/ },"));
+  assert.deepEqual(app.verify().errors, []);
+});
+
+test('game events reject a missing, hidden, conditional or late subscription', (t) => {
+  const app = gameEventsFixture(t);
+  const line = 'subscribeGameEvents(logNativeAnalytics);';
+  const entries = [
+    // An initializer inside the game's own module instead of the shared transport.
+    gameEventsEntry.replace(line, 'initializeGameAnalytics();'),
+    gameEventsEntry.replace(line, `// ${line}`),
+    gameEventsEntry.replace(line, `initializeGameAnalytics(); // ${line}`),
+    gameEventsEntry.replace(line, `initializeGameAnalytics(); /* ${line} */`),
+    gameEventsEntry.replace(line, `const note = '${line}';`),
+    gameEventsEntry.replace(line, `const note = \`${line}\`;`),
+    // Inside the string the call follows a semicolon, so only blanking the string rejects it.
+    gameEventsEntry.replace(line, `const note = ';${line}';`),
+    gameEventsEntry.replace(line, `const note = /;${line}/;`),
+    gameEventsEntry.replace(line, `function later() { ${line} }`),
+    gameEventsEntry.replace(line, `const later = () => ${line}`),
+    gameEventsEntry.replace(line, `if (globalThis.analytics) ${line}`),
+    gameEventsEntry.replace(`${line}\n`, '') + `\n${line}`,
+    gameEventsEntry.replace("import { logNativeAnalytics } from './native-analytics.js';\n", ''),
+    gameEventsEntry.replace("import('../main.js')", "import(gameModule)"),
+    gameEventsEntry.replace("import('../main.js')", "import(`../main.js`)"),
+    gameEventsEntry.replace("import('../main.js')", "import('../missing.js')"),
+  ];
+  for (const entry of entries) {
+    app.write('src/js/platform/bootstrap.js', entry);
+    assert.deepEqual(app.verify().errors, [entryError], entry);
+  }
+  app.remove('src/js/platform/bootstrap.js');
+  assert.ok(app.verify().errors.includes('Missing or unreadable file: src/js/platform/bootstrap.js'));
+});
+
+// ES imports run before the module body, so a statically reachable game module
+// emits before the subscription line has run, wherever the import is written.
+test('game events reject a game module imported statically, directly or through another module', (t) => {
+  const app = gameEventsFixture(t);
+  app.write('src/js/loader.js', 'export {};');
+  for (const entry of [`${gameEventsEntry}\nimport '../main.js';`,
+    // The first string is only a fragment of the dynamically imported path.
+    `import '../main.js';\n${gameEventsEntry.replace("import('../main.js')", "import('../' + 'main.js')")}`,
+    // Here the first string is a real, unrelated module, so only the lone-literal rule rejects it.
+    `import '../main.js';\n${gameEventsEntry.replace("import('../main.js')", "import('../loader.js'.replace('loader', 'main'))")}`, `import * as game from '../main.js';\n${gameEventsEntry}`,
+    `export { startAdvertising } from '../main.js';\n${gameEventsEntry}`]) {
+    app.write('src/js/platform/bootstrap.js', entry);
+    assert.deepEqual(app.verify().errors, [entryError], entry);
+  }
+  app.write('src/js/platform/startup.js', "import '../ui.js';\nexport function startGame() {}");
+  app.write('src/js/ui.js', "import { start } from './main.js';");
+  app.write('src/js/platform/bootstrap.js', gameEventsEntry);
+  assert.deepEqual(app.verify().errors, [entryError]);
+  app.write('src/js/ui.js', "// import { start } from './main.js';\nexport const ui = '../main.js';");
+  assert.deepEqual(app.verify().errors, []);
+  // The bundler would resolve './main' to the game module; the check refuses to guess.
+  app.write('src/js/ui.js', "import { start } from './main';");
+  assert.deepEqual(app.verify().errors, ['Game events: name local modules by their file; cannot follow the static imports of bootstrap.js to src/js/main.']);
+  app.write('src/js/platform/bootstrap.js', gameEventsEntry.replace("import('../main.js')", "import('../main')"));
+  app.write('src/js/ui.js', 'export const ui = 1;');
+  assert.deepEqual(app.verify().errors, [entryError]);
+});
+
+test('a copied channel without the game registry is an incomplete installation', (t) => {
+  const app = gameEventsFixture(t);
+  app.remove('src/js/game-events.js');
+  assert.ok(app.verify().errors.includes('Missing or unreadable file: src/js/game-events.js'));
+});
 
 test('unused consent helper does not select the consumer consent policy', t => {
   const app = fixture(t);

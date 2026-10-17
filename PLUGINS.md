@@ -462,6 +462,81 @@ never rewrites connected games automatically. Package publication/pin updates fo
 new template changes are a separate step.
 
 
+## Game events
+
+Extracted from Gym, Gym2 and Miner, which shipped the same mechanism under three
+copies. The split:
+
+| Owner | What |
+| --- | --- |
+| Game, `src/js/game-events.js` | event names, the fields of each, `schemaRevision`, which events count once per launch, patterns for fields that are not short tokens, and every emit point |
+| Template, `platform/game-event-channel.js` | the `bs_` prefix, `schema_revision` on every event, value rules, Analytics name/parameter/value limits, listener isolation |
+| Template, `platform/native-analytics.js` | Android/iOS-only delivery: one event at a time, no queue or retry, failures stop in the transport |
+
+The registry is the game's only events module and imports no package, so Node
+tests import it and the web build never reaches an SDK through it:
+
+```js
+// src/js/game-events.js
+import { createGameEventChannel } from './platform/game-event-channel.js';
+
+export const { emitGameEvent, subscribeGameEvents } = createGameEventChannel({
+  schemaRevision: 1,
+  events: { game_ready: [], level_up: ['level'], purchase_start: ['product'] },
+  oncePerLaunch: ['game_ready'],
+  // Fields absent here are lowercase tokens of at most 40 characters.
+  valuePatterns: { product: /^[a-z0-9_.-]{1,100}$/ },
+});
+```
+
+The entry module, `src/js/platform/bootstrap.js`, subscribes the transport
+before it imports the game module, so no event emitted while the game loads is
+lost:
+
+```js
+import { logNativeAnalytics } from './native-analytics.js';
+import { subscribeGameEvents } from '../game-events.js';
+
+subscribeGameEvents(logNativeAnalytics);
+void startGame(() => import('../main.js'), revealScreen, onLoadError);
+```
+
+`emitGameEvent(name, values)` returns whether the event was published. An
+undeclared name, a repeated once-per-launch event, or any declared field that is
+missing, not a short token (or its declared pattern), longer than 100 characters,
+or not a finite nonnegative number publishes nothing; undeclared fields are
+dropped. A once-per-launch event counts only when it is actually published. A
+throwing listener never reaches the game. A malformed declaration — including a
+field named with a prefix Analytics reserves (`firebase_`, `google_`, `ga_`) —
+throws when the module is first imported, so the game's own tests fail before a
+build.
+
+Collection and consent settings stay native and SDK-owned; neither module
+enables, gates or queues on consent. Firebase supplies app version, session and
+install identity; do not send a second `first_open`, `session_start`, purchase
+or `ad_impression`. Measurement experiments such as a time-zone user property
+stay game-owned beside these modules.
+
+When `src/js/game-events.js` or `src/js/platform/game-event-channel.js` exists,
+the plugin verifier requires both template modules byte for byte, the registry
+built with `createGameEventChannel` and importing no package, and in
+`bootstrap.js` the subscription as a top-level statement before its first
+dynamic import. The game module is imported by a single string literal, and
+every local module reached from `bootstrap.js` is named by its file
+(`'../main.js'`, not `'../main'` or an alias): the check does not resolve paths
+the way the bundler does. Static imports run before any statement of the module,
+so the dynamically imported game module must not be reachable through
+`bootstrap.js`'s static imports, directly or through other local modules. The
+verifier reads these files with comments and string bodies blanked; it is a
+source check that runs without the game's bundler, not a parser or an
+execution. That is wiring only. The game's tests own the emit conditions — a confirmed change after its
+successful save, an action at the action, no duplicates, context reset — and
+delivery is a device check: DebugView on Android and iOS, then the events in a
+normal GA4 report or the BigQuery export. Register the game's parameters as GA4
+custom definitions before the first release that sends them; registration is
+not retroactive.
+
+
 ## AdMob/Yandex Android and iOS ad revenue collector
 
 `template/platform/ads/ad-revenue.js` is the shared consumer-neutral collector
@@ -534,8 +609,8 @@ manifest's `acceptedPins`; CAS requires
 `setAvailability` and rejects a runtime without it. Consumers retain their
 existing pins until explicitly migrated. CAS telemetry requires Firebase Analytics.
 
-CAS `native-analytics.js` forwards events directly, without a CMP queue or a
-CAS completion gate. Native startup enables technical collection even when CAS
+CAS telemetry goes through the shared `native-analytics.js`, which forwards
+events directly, without a CMP queue or a CAS completion gate. Native startup enables technical collection even when CAS
 is unavailable, explicitly overriding the technical `false` persisted by older
 releases. This app policy assumes no separate user-facing collection opt-out;
 a consumer adding one must honor it at native startup. Collection enablement

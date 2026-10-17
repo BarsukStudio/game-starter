@@ -9,7 +9,16 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.31**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.32**.
+Alpha.32 moves the game-event transport into the template, extracted from Gym,
+Gym2 and Miner. `platform/game-event-channel.js` publishes the events a game
+declares in its own `src/js/game-events.js` and owns the shared rules: the `bs_`
+prefix, `schema_revision`, value rules, Analytics limits and listener isolation.
+`platform/native-analytics.js`, formerly CAS-only, is now the transport for both
+native stacks. Event names, fields and emit points stay with the game. The plugin
+verifier checks both modules byte for byte and the entry module's subscription
+before the game loads; see [PLUGINS.md](PLUGINS.md#game-events). Consumers
+migrate explicitly. The contract is unchanged.
 Alpha.31 widens the plugin verifier's Performance check, which in alpha.30
 missed a direct SDK dependency, `firebasePerfVersion`, the generated Gradle
 dependency and settings, and collection settings. It now checks each file that
