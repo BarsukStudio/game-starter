@@ -49,7 +49,7 @@ function fixture(t, { diagnostics = true, purchasePin } = {}) {
   };
   write('android/build.gradle', Object.entries({ ...manifest.android.classpaths, ...(diagnostics ? manifest.diagnostics.androidClasspaths : {}) })
     .map(([name, version]) => `classpath '${name}:${version}'`).join('\n'));
-  write('android/variables.gradle', Object.entries({ ...manifest.android.variables, ...(diagnostics ? manifest.diagnostics.androidVariables : {}) })
+  write('android/variables.gradle', Object.entries({ ...manifest.android.variables, playServicesAdsVersion: manifest.advertising.admob.androidSdkVersion, ...(diagnostics ? manifest.diagnostics.androidVariables : {}) })
     .map(([name, version]) => `${name} = '${version}'`).join('\n'));
   write('android/app/build.gradle', `applicationId 'test.example'
 apply plugin: 'com.google.gms.google-services'
@@ -63,7 +63,8 @@ implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlytic
   write('android/app/google-services.json', { project_info: { project_id: 'test' }, client: [{ client_info: { mobilesdk_app_id: '1:1:android:test', android_client_info: { package_name: 'test.example' } } }] });
   write('ios/App/Podfile', `platform :ios, '${manifest.ios.deploymentTarget}'\n${Object.values(plugins).map(([pod]) => `pod '${pod}'`).join('\n')}`);
   const lock = Object.entries(plugins).map(([name, [pod]]) => `  - ${pod} (${entries[`node_modules/${name}`].version}):`).join('\n')
-    + `\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n`;
+    + `\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n`
+    + `  - Google-Mobile-Ads-SDK (${manifest.advertising.admob.iosSdkVersion})\n`;
   write('ios/App/Podfile.lock', lock);
   write('ios/App/Pods/Manifest.lock', lock);
   write('ios/App/App/capacitor.config.json', { packageClassList: Object.values(plugins).map(([, name]) => name) });
@@ -256,6 +257,22 @@ for (const pin of manifest.acceptedPins['@barsuk/game-runtime']) {
 
 test('complete baseline passes with installed metadata and both native targets', (t) => {
   assert.deepEqual(fixture(t).verify().errors, []);
+});
+
+test('AdMob SDK pins reject stale or floating Android versions and stale iOS pods', (t) => {
+  for (const version of ['25.4.0', '25.4.+']) {
+    const app = fixture(t);
+    const file = 'android/variables.gradle';
+    const source = fs.readFileSync(path.join(app.directory, file), 'utf8');
+    app.write(file, source.replace(manifest.advertising.admob.androidSdkVersion, version));
+    assert.ok(app.verify().errors.some(error => error.includes('playServicesAdsVersion must pin')));
+  }
+  const app = fixture(t);
+  for (const file of ['ios/App/Podfile.lock', 'ios/App/Pods/Manifest.lock']) {
+    const source = fs.readFileSync(path.join(app.directory, file), 'utf8');
+    app.write(file, source.replace(`Google-Mobile-Ads-SDK (${manifest.advertising.admob.iosSdkVersion})`, 'Google-Mobile-Ads-SDK (13.6.0)'));
+  }
+  assert.ok(app.verify().errors.some(error => error.includes('Google-Mobile-Ads-SDK must resolve')));
 });
 
 test('weak SwiftUICore linking may be a string, the all-architecture setting, or both', (t) => {

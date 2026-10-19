@@ -292,6 +292,11 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     const rootGradle = code(read('android/build.gradle'));
     const appGradle = code(read('android/app/build.gradle'));
     const variables = code(read('android/variables.gradle'));
+    if (!cas) {
+      const version = manifest.advertising.admob.androidSdkVersion;
+      check(new RegExp(`^\\s*playServicesAdsVersion\\s*=\\s*['"]${escape(version)}['"]\\s*;?\\s*$`, 'm').test(variables),
+        `Android: playServicesAdsVersion must pin ${version} in variables.gradle.`);
+    }
     const generated = code(read('android/app/capacitor.build.gradle'));
     const registry = json('android/app/src/main/assets/capacitor.plugins.json');
     const xml = (file) => read(file).replace(/<!--[\s\S]*?-->/g, '');
@@ -378,6 +383,11 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
   if (targets.includes('ios')) {
     const podfile = code(read('ios/App/Podfile'));
     const podLock = read('ios/App/Podfile.lock');
+    if (!cas) {
+      const version = manifest.advertising.admob.iosSdkVersion;
+      check(new RegExp(`^  - Google-Mobile-Ads-SDK \\(${escape(version)}\\)`, 'm').test(podLock),
+        `iOS: Google-Mobile-Ads-SDK must resolve to ${version}.`);
+    }
     check(podLock === read('ios/App/Pods/Manifest.lock'), 'iOS: Pods are out of sync with Podfile.lock.');
     check(new RegExp(`platform\\s*:ios,\\s*['"]${escape(manifest.ios.deploymentTarget)}['"]`).test(podfile), `iOS: Podfile deployment target must be ${manifest.ios.deploymentTarget}.`);
     const registry = json('ios/App/App/capacitor.config.json');

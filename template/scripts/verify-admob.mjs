@@ -1,4 +1,4 @@
-// Hashes come from the official npm 8.2.0 archive, verified against package-lock
+// Hashes come from the official npm 8.2.1 archive, verified against package-lock
 // integrity. Consumer manifests include approved banner geometry and consent-error metadata.
 import fs from 'node:fs';
 import path from 'node:path';

@@ -125,6 +125,13 @@ existing blocks; never overwrite an entire native file with a snippet.
   Keep this file alongside the patch runner, including in native sync preflights.
 
   AdMob 8.2 fixes iOS revenue micros and preserves native load-error codes.
+  The current baseline uses the official AdMob 8.2.1 package. SDK targets live
+  in `advertising.admob` in the plugin manifest: pin Android's
+  `playServicesAdsVersion` in `android/variables.gradle`; the iOS SDK is pinned
+  by the plugin podspec. After updating the package, update the selected iOS pod
+  with CocoaPods and retain `Podfile.lock`. Refresh the hash manifest from the
+  integrity-verified npm archive plus the existing approved patches. The plugin
+  verifier rejects a floating/stale Android SDK pin and a stale iOS SDK lock.
   Revenue remains divided by 1,000,000; do not compensate iOS values a second time.
   Native initialization can reject while the Android parent view is unavailable;
   retain lifecycle recovery and the independent game/store startup.
