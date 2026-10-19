@@ -9,7 +9,12 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.32**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.33**.
+Alpha.33 lets `barsuk-verify-web-compat` accept a feature test whose string is
+a template without substitutions: a minified Vite 8 bundle writes
+`typeof x == \`function\``, and the check reported those guarded calls as
+unguarded. A template with a substitution still proves nothing. The contract is
+unchanged.
 Alpha.32 moves the game-event transport into the template, extracted from Gym,
 Gym2 and Miner. `platform/game-event-channel.js` publishes the events a game
 declares in its own `src/js/game-events.js` and owns the shared rules: the `bs_`

@@ -123,7 +123,10 @@ function apiUse(node, apis) {
   return null;
 }
 
-const isString = (node, value) => node?.type === 'Literal' && node.value === value;
+// Minifiers may write a constant string as a template without substitutions:
+// Vite 8 emits `typeof x == \`function\``, which is the same feature test.
+const isString = (node, value) => (node?.type === 'Literal' && node.value === value)
+  || (node?.type === 'TemplateLiteral' && node.expressions.length === 0 && node.quasis[0]?.value.cooked === value);
 
 // True only when `test` being truthy proves the callee exists: `typeof X ===
 // 'function'`, `typeof X !== 'undefined'`, `'name' in owner`, or an `&&` of

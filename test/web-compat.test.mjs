@@ -61,6 +61,7 @@ for (const [label, source] of [
   ['a parenthesized optional .apply', "(Object.hasOwn?.apply)(Object, [{}, 'x']);\n"],
   ['a parenthesized optional .bind', "(Object.hasOwn?.bind)(Object)({}, 'x');\n"],
   ['a test that itself throws when the owner is absent', "if (typeof scheduler.postTask === 'function') scheduler.postTask(task);\n"],
+  ['a template with a substitution', 'if (typeof Object.hasOwn == `func${tion}`) Object.hasOwn(obj, key);\n'],
 ]) {
   test(`${label} does not guard the call`, parsing, async (t) => {
     assert.equal((await errorsFor(t, source)).length, 1);
@@ -78,6 +79,10 @@ for (const [label, source] of [
   ['an optional call', 'const id = crypto.randomUUID?.();\n'],
   ['an optional call through the global object', 'globalThis.structuredClone?.({});\n'],
   ['an optional .call', "Object.hasOwn?.call(Object, {}, 'x');\n"],
+  // Bakery Tumble's minified Vite 8 bundle wrote both strings as templates.
+  ['a template string', 'function id(e) {\n  if (typeof e.randomUUID == `function`) return e.randomUUID();\n}\n'],
+  ['a template string in a ternary', 'const s = typeof Intl?.Segmenter == `function` ? new Intl.Segmenter() : null;\n'],
+  ['a template undefined test', 'typeof structuredClone != `undefined` && structuredClone(value);\n'],
 ]) {
   test(`a positive feature test guards the call: ${label}`, parsing, async (t) => {
     assert.deepEqual(await errorsFor(t, source), []);
