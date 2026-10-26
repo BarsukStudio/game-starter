@@ -652,6 +652,7 @@ export function preloadInterstitialAd() {
     if (!lifecycle.beginLoad()) return;
     nativeAdmob.preloadInterstitial();
   } else if (state.provider === 'yandex-native' && nativeYandex.isPluginLoaded()) {
+    if (nativeYandex.deferPreload('interstitial')) return;
     if (!lifecycle.beginLoad()) return;
     nativeYandex.preloadInterstitial();
   } else if (state.provider === 'yandex-web') {
@@ -670,6 +671,7 @@ export function preloadRewardedAd() {
     if (!lifecycle.beginLoad()) return;
     nativeAdmob.preloadRewarded();
   } else if (state.provider === 'yandex-native' && nativeYandex.isPluginLoaded()) {
+    if (nativeYandex.deferPreload('rewarded')) return;
     if (!lifecycle.beginLoad()) return;
     nativeYandex.preloadRewarded();
   } else if (state.provider === 'yandex-web') {

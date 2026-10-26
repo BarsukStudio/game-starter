@@ -21,10 +21,18 @@ import { bindAdRevenueEvents } from './ad-revenue.js';
 let deps = null;
 let plugin = null;
 let presentation = null;
+const deferredPreloads = new Set();
 let bannerTelemetry = null;
 
 export function hasPresentation() {
   return presentation !== null;
+}
+
+// Queue before beginLoad: a native view can outlive the JS show watchdog.
+export function deferPreload(format) {
+  if (!presentation) return false;
+  deferredPreloads.add(format);
+  return true;
 }
 
 export function isPresentationUnresolved(format) {
@@ -35,6 +43,15 @@ function settlePresentation(format, requestId) {
   if (!presentation || presentation.format !== format || presentation.scope.requestId !== requestId) return;
   const unresolved = !presentation.scope.isCurrent();
   presentation = null;
+  const pending = [...deferredPreloads];
+  deferredPreloads.clear();
+  // Let the terminal callback close its lifecycle before starting another load.
+  if (pending.length) queueMicrotask(() => {
+    for (const format of pending) {
+      if (format === 'interstitial') deps.preloadInterstitial();
+      else deps.preloadRewarded();
+    }
+  });
   if (unresolved) deps.onPresentationSettled?.();
 }
 

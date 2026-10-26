@@ -9,7 +9,7 @@ let sequence = 0;
 
 for (const format of ['interstitial', 'rewarded']) for (const boundDismissal of [false, true]) {
   test(`Yandex ${format}: boundDismissal=${boundDismissal} isolates later shows`, async () => {
-    const listeners = new Map(), calls = [], events = [];
+    const listeners = new Map(), calls = [], events = [], preloads = [];
     const sdk = {
       resetAds: async () => {}, initialize: async () => {}, setUserConsent: async () => {},
       addListener: async (name, callback) => { listeners.set(name, callback); },
@@ -48,21 +48,36 @@ for (const format of ['interstitial', 'rewarded']) for (const boundDismissal of 
       },
     };
     assert.equal(await adapter.init({ interstitial: lifecycle, rewarded: lifecycle,
-      isAdsRemoved: () => true, preloadRewarded() {},
+      isAdsRemoved: () => true,
+      preloadInterstitial: () => preloads.push('interstitial'),
+      preloadRewarded: () => preloads.push('rewarded'),
       onPresentationSettled: () => events.push('available'),
     }), true);
+    preloads.length = 0;
+    assert.equal(adapter.deferPreload('rewarded'), false);
     const show = format === 'rewarded' ? 'showRewarded' : 'showInterstitial';
     const a = adapter[show](); const old = calls.at(-1);
     await assert.rejects(adapter.showInterstitial(), /has not settled/);
     await assert.rejects(adapter.showRewarded(), /has not settled/);
     if (!boundDismissal) current.valid = false;
+    // A watchdog closes JS while the native view is still presenting. Neither
+    // format may begin a replacement load, including repeated preload requests.
+    for (let i = 0; i < 3; i++) {
+      assert.equal(adapter.deferPreload('interstitial'), true);
+      assert.equal(adapter.deferPreload('rewarded'), true);
+    }
     assert.equal(adapter.isPresentationUnresolved(format), !boundDismissal);
     for (const payload of [{}, { requestId: 'old' }]) {
       listeners.get(`${format}Dismissed`)(payload);
       assert.equal(adapter.hasPresentation(), true);
+      await Promise.resolve();
+      assert.deepEqual(preloads, []);
     }
     listeners.get(`${format}Dismissed`)({ requestId: old.options.requestId });
     assert.deepEqual(events, boundDismissal ? ['closed'] : ['available']);
+    assert.deepEqual(preloads, []);
+    await Promise.resolve();
+    assert.deepEqual(preloads, ['interstitial', 'rewarded']);
     const b = adapter.showRewarded(); const next = calls.at(-1);
     old.resolve({ presented: true, rewarded: true }); await a;
     listeners.get(`${format}Dismissed`)({ requestId: old.options.requestId });
