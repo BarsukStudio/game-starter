@@ -12,3 +12,12 @@ export function logNativeAnalytics(event) {
   void Promise.resolve().then(() => FirebaseAnalytics.logEvent(event))
     .catch(() => console.warn('Native Analytics event delivery failed'));
 }
+
+// A user property describes the installation rather than one moment: it is set
+// again on every launch and attached by the SDK to the events that follow. The
+// same contract as events: Android and iOS only, one attempt, failures stop here.
+export function setNativeUserProperty(key, value) {
+  if (!isNative) return;
+  void Promise.resolve().then(() => FirebaseAnalytics.setUserProperty({ key, value }))
+    .catch(() => console.warn('Native Analytics user property delivery failed'));
+}

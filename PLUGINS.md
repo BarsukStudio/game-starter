@@ -521,8 +521,24 @@ build.
 Collection and consent settings stay native and SDK-owned; neither module
 enables, gates or queues on consent. Firebase supplies app version, session and
 install identity; do not send a second `first_open`, `session_start`, purchase
-or `ad_impression`. Measurement experiments such as a time-zone user property
-stay game-owned beside these modules.
+or `ad_impression`.
+
+User properties go through `setNativeUserProperty(key, value)` in the same
+transport. The template sets two: `bridge.js` records the native ad route of the
+launch as `bs_ad_provider` (`yandex` or `admob`, or a QA override), and
+`platform/device-time-zone.js` records the device's IANA zone as `bs_time_zone`
+when the entry module calls it before the game loads:
+
+```js
+import { recordDeviceTimeZone } from './device-time-zone.js';
+
+recordDeviceTimeZone();
+```
+
+GA4 reports show only string parameters of app events as custom dimensions; a
+number registered as a dimension reads `(not set)`. Send a categorical field —
+a location, a tier, a level id — as a string, and keep numbers for metrics and
+BigQuery.
 
 When `src/js/game-events.js` or `src/js/platform/game-event-channel.js` exists,
 the plugin verifier requires both template modules byte for byte, the registry

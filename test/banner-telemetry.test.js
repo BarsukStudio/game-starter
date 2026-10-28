@@ -31,6 +31,7 @@ test('each recovery request has an ID; duplicate SDK/rejection failures coalesce
   assert.equal(f.events[2].params.delay_ms, 5000);
   assert.equal(f.events[4].params.retry_count, 1);
   assert.equal(f.events[4].params.test_ads, 1);
+  assert.equal(f.events[4].params.ad_mode, 'test');
   assert.ok(!JSON.stringify(f.events).includes('private details'));
 });
 test('SDK refresh failure is separate from app request; cap emits once; stopped callbacks ignored', async () => {
@@ -42,6 +43,7 @@ test('SDK refresh failure is separate from app request; cap emits once; stopped 
   assert.equal(failure.load_scope, 'sdk_refresh');
   assert.equal(failure.banner_request_id, undefined);
   assert.equal(failure.error_code, 'unknown');
+  assert.equal(failure.ad_mode, 'production');
   assert.equal(f.events.filter(e => e.name === 'bs_banner_retry_exhausted').length, 1);
   assert.equal(f.events.length, 4);
 });

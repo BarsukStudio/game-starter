@@ -346,7 +346,7 @@ for (const source of ['locale', 'debug']) {
     const bridge = readFileSync(new URL('../template/platform/bridge.js', import.meta.url), 'utf8');
     const recovery = bridge.slice(bridge.indexOf('let yandexRecoveryBound'), bridge.indexOf('async function initializeAds(callbacks)'));
     const initialize = bridge.slice(bridge.indexOf('async function initializeAds(callbacks)'), bridge.indexOf('// Native *and* selling'));
-    const network = [], visibility = [];
+    const network = [], visibility = [], userProperties = [];
     let attempts = 0, admobAttempts = 0;
     const document = { visibilityState: 'visible', addEventListener: (_, fn) => visibility.push(fn) };
     const state = { callbacks: {}, provider: 'none', removeAdsFlag: false };
@@ -357,10 +357,13 @@ for (const source of ['locale', 'debug']) {
       nativeYandex: { init: async () => ++attempts > 1, canRetryInitialization: () => attempts === 1 },
       nativeAdmob: { init: async () => { admobAttempts++; return true; } },
       createAdAdapterDeps: () => ({}), bindAdmobRecovery() {}, console,
+      setNativeUserProperty: (key, value) => userProperties.push([key, value]),
     };
     const api = vm.runInNewContext(`${recovery}\n${initialize}\n({ initializeAds });`, context);
     await api.initializeAds({ locale: 'ru-RU' });
     assert.equal(attempts, 1); assert.equal(admobAttempts, 0); assert.equal(state.provider, 'none');
+    // The route is recorded once it is chosen, even when its SDK then fails to start.
+    assert.deepEqual(userProperties, [['bs_ad_provider', 'yandex']]);
     document.visibilityState = 'hidden'; network[0]();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(attempts, 1, 'background network events cannot restart advertising');
@@ -394,6 +397,7 @@ test('Yandex recovery retains a signal received during initial setup and handles
     nativeAdmob: { init: async () => { throw Error('Yandex must not switch to AdMob'); } },
     createAdAdapterDeps: () => ({}), bindAdmobRecovery() {},
     nativeShell: { bindNativeLifecycle: async handlers => { nativeHandlers = handlers; } }, console,
+    setNativeUserProperty() {},
   };
   const api = vm.runInNewContext(`${startup}\n${recovery}\n${initialize}\n${lifecycle}`.replaceAll('export ', '') + '\n({ initializePlatformServices, bindNativeLifecycle });', context);
   const initial = api.initializePlatformServices({ locale: 'ru-RU' });

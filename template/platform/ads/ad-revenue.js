@@ -17,6 +17,9 @@ export function revenueParameters(provider, format, payload, testAds) {
     ad_provider: provider,
     ad_format: format,
     test_ads: testAds ? 1 : 0,
+    // GA4 reports read only string parameters of app events as dimensions; the
+    // number stays for BigQuery collectors.
+    ad_mode: testAds ? 'test' : 'production',
     revenue_status: 'missing',
     revenue_precision: 'unknown',
     ad_unit_id: text(payload?.adUnitId),

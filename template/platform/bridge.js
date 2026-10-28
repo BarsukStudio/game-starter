@@ -14,6 +14,7 @@ import {
   runtimeTarget,
 } from './env.js';
 import * as nativeShell from './native-shell.js';
+import { setNativeUserProperty } from './native-analytics.js';
 import * as crazyGames from './ads/crazygames-web.js';
 import * as yandexWeb from './ads/yandex-web.js';
 import * as nativeYandex from './ads/native-yandex.js';
@@ -437,6 +438,10 @@ async function initializeAds(callbacks) {
   if (isNative) {
     const selection = resolveNativeAdProvider(callbacks.locale);
     state.providerSource = selection.source;
+    // The route this launch took, so every report can split by it — including
+    // players who never reach an ad event. Ad events still carry their own
+    // ad_provider for the network that actually served.
+    setNativeUserProperty('bs_ad_provider', selection.provider);
     if (selection.provider === 'off') {
       state.provider = 'none';
       return;

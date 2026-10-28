@@ -9,7 +9,19 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.33**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.36**.
+Alpha.36 makes the ad test flag readable in GA4 reports and records two user
+properties. GA4 shows only string parameters of app events as custom
+dimensions, so the numeric `test_ads` read `(not set)` there; ad revenue and
+banner events now also carry `ad_mode` (`production` or `test`; the CAS variant
+adds `unknown`), and `test_ads` stays for BigQuery collectors.
+`platform/native-analytics.js` exports `setNativeUserProperty`; `bridge.js`
+records the native ad route of each launch as `bs_ad_provider`, and the new
+`platform/device-time-zone.js`, extracted from Gym and Gym2, records
+`bs_time_zone` when `bootstrap.js` calls it. Register `ad_mode`,
+`bs_ad_provider` and `bs_time_zone` in each game's GA4 property before the
+release that sends them. Consumers migrate explicitly. The contract is
+unchanged.
 Alpha.33 lets `barsuk-verify-web-compat` accept a feature test whose string is
 a template without substitutions: a minified Vite 8 bundle writes
 `typeof x == \`function\``, and the check reported those guarded calls as

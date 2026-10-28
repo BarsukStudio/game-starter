@@ -189,6 +189,8 @@ test('CAS collector preserves revenue quality and deduplicates callbacks on both
   assert.equal(events[0].name, 'bs_ad_revenue');
   assert.equal(events[0].params.revenue_amount, 0);
   assert.equal(events[0].params.ad_provider, 'cas');
+  assert.equal(events[0].params.ad_mode, 'production');
+  assert.equal(context.revenueParameters({ ...event, testMode: undefined }).ad_mode, 'unknown');
   for (const revenue of [null, undefined]) assert.equal(context.revenueParameters({ ...event, revenue }).revenue_status, 'missing');
   for (const revenue of [-1, NaN, Infinity]) assert.equal(context.revenueParameters({ ...event, revenue }).revenue_status, 'invalid');
   const invalid = context.revenueParameters({ ...event, revenue: null, revenueStatus: 'invalid' });

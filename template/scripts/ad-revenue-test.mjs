@@ -40,12 +40,14 @@ test('AdMob micros become custom amounts; zero and unknown precision remain expl
   assert.equal(result.revenue_currency, 'USD');
   assert.equal(result.revenue_precision, 'estimated');
   assert.equal(result.test_ads, 0);
+  assert.equal(result.ad_mode, 'production');
   assert.equal(result.value, undefined);
   assert.equal(result.currency, undefined);
   const zero = f.revenueParameters('admob', 'banner', { ...paid, valueMicros: 0, precision: 0 }, true);
   assert.equal(zero.revenue_amount, 0);
   assert.equal(zero.revenue_precision, 'unknown');
   assert.equal(zero.test_ads, 1);
+  assert.equal(zero.ad_mode, 'test');
 });
 
 test('missing, malformed and unsafe AdMob values are never converted into revenue', () => {

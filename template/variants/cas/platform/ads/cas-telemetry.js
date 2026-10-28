@@ -21,6 +21,7 @@ export function recordCasAdEvent(name, { format, testMode, requestId, showId, lo
   const params = {
     schema_revision: 1, native_platform: nativePlatform, ad_provider: 'cas', ad_format: format,
     test_ads: testMode === true ? 1 : testMode === false ? 0 : -1,
+    ad_mode: testMode === true ? 'test' : testMode === false ? 'production' : 'unknown',
   };
   if (typeof requestId === 'string' && requestId.length <= 100) params.ad_request_id = requestId;
   if (typeof showId === 'string' && showId.length <= 100) params.ad_show_id = showId;

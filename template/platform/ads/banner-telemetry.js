@@ -17,6 +17,8 @@ export function createBannerTelemetry(provider, testAds) {
     const params = {
       schema_revision: 1, native_platform: nativePlatform,
       ad_provider: provider, ad_format: 'banner', test_ads: testAds ? 1 : 0,
+      // A string twin of test_ads: GA4 reports drop numeric app dimensions.
+      ad_mode: testAds ? 'test' : 'production',
       retry_count: retry, load_scope: scope,
       ...(requestId ? { banner_request_id: requestId } : {}), ...fields,
     };

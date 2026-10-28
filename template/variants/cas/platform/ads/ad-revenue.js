@@ -11,6 +11,8 @@ export function revenueParameters(event) {
     ad_provider: 'cas',
     ad_format: event.format,
     test_ads: event.testMode === true ? 1 : event.testMode === false ? 0 : -1,
+    // GA4 reports read only string parameters of app events as dimensions.
+    ad_mode: event.testMode === true ? 'test' : event.testMode === false ? 'production' : 'unknown',
     revenue_status: event.revenueStatus === 'invalid' ? 'invalid' : 'missing',
     revenue_precision: ['precise', 'floor', 'estimated'].includes(event.revenuePrecision) ? event.revenuePrecision : 'unknown',
     ad_unit_id: text(event.sourceUnitId),
