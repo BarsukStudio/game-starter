@@ -585,6 +585,111 @@ test('explicit consent flag detects absent integration even without JS opt-in', 
 });
 
 
+const metaPackage = '@capgo/capacitor-facebook-analytics';
+const metaAndroidManifest = `<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools"><application>
+<meta-data android:name="com.facebook.sdk.ApplicationId" android:value="@string/facebook_app_id" />
+<meta-data android:name="com.facebook.sdk.ClientToken" android:value="@string/facebook_client_token" />
+<meta-data android:name="com.facebook.sdk.AutoInitEnabled" android:value="false" />
+<meta-data android:name="com.facebook.sdk.AutoLogAppEventsEnabled" android:value="false" />
+<provider android:name="com.facebook.internal.FacebookInitProvider" android:authorities="\${applicationId}.FacebookInitProvider" tools:node="remove" />
+</application></manifest>`;
+const metaInfo = { UIMainStoryboardFile: 'Main', FacebookAppID: '1', FacebookClientToken: 'token',
+  FacebookAutoInitEnabled: false, FacebookAutoLogAppEventsEnabled: false };
+
+function metaFixture(t) {
+  const app = consentFixture(t);
+  const version = manifest.metaAppEvents.dependencies[metaPackage];
+  const pkg = app.read('package.json');
+  pkg.dependencies[metaPackage] = version;
+  app.write('package.json', pkg);
+  const lock = app.read('package-lock.json');
+  lock.packages[''] = pkg;
+  lock.packages[`node_modules/${metaPackage}`] = { version, resolved: version, integrity: 'fixture-meta' };
+  app.write('package-lock.json', lock);
+  app.write('node_modules/.package-lock.json', lock);
+  app.write(`node_modules/${metaPackage}/package.json`, { name: metaPackage, version });
+  app.append('android/app/capacitor.build.gradle', "\nimplementation project(':capgo-capacitor-facebook-analytics')");
+  const registry = app.read('android/app/src/main/assets/capacitor.plugins.json');
+  app.write('android/app/src/main/assets/capacitor.plugins.json', [...registry, { pkg: metaPackage }]);
+  app.write('android/app/src/main/AndroidManifest.xml', metaAndroidManifest);
+  app.append('ios/App/Podfile', "\npod 'CapgoCapacitorFacebookAnalytics'");
+  const podLock = fs.readFileSync(path.join(app.directory, 'ios/App/Podfile.lock'), 'utf8')
+    + `  - CapgoCapacitorFacebookAnalytics (${version}):\n  - FBSDKCoreKit (${manifest.metaAppEvents.iosSdkVersion}):\n`;
+  app.write('ios/App/Podfile.lock', podLock);
+  app.write('ios/App/Pods/Manifest.lock', podLock);
+  const config = app.read('ios/App/App/capacitor.config.json');
+  config.packageClassList.push('FacebookAnalyticsPlugin');
+  app.write('ios/App/App/capacitor.config.json', config);
+  app.write('ios/App/App/Info.plist', metaInfo);
+  for (const file of ['meta-app-events.js', 'consent-signals.js']) {
+    app.write(`src/js/platform/${file}`, fs.readFileSync(new URL(`../template/platform/${file}`, import.meta.url), 'utf8'));
+  }
+  app.write('src/js/platform/bridge.js', "import { startMetaAppEvents } from './meta-app-events.js';\nvoid startMetaAppEvents();");
+  return app;
+}
+
+test('Meta App Events passes with the template module, consent wiring and gated native setup', (t) => {
+  assert.deepEqual(metaFixture(t).verify().errors, []);
+});
+
+test('Meta App Events is detected from the dependency and brings the consent checks', (t) => {
+  const app = metaFixture(t);
+  app.remove('ios/App/App/ConsentSignalsPlugin.swift');
+  app.write('src/js/platform/ads/native-admob.js', '// no consent import');
+  assert.ok(app.verify().errors.some(error => error.includes('ConsentSignalsPlugin.swift')));
+});
+
+test('Meta App Events rejects a drifted module or consent policy and a missing start', (t) => {
+  const app = metaFixture(t);
+  app.append('src/js/platform/meta-app-events.js', '\n// local change');
+  app.write('src/js/platform/consent-signals.js', "export function hasMetaConsent() { return true; }");
+  app.write('src/js/platform/bridge.js', "// import { startMetaAppEvents } from './meta-app-events.js';");
+  const errors = app.verify().errors;
+  assert.ok(errors.includes('Meta App Events: module differs from the reviewed template.'));
+  assert.ok(errors.includes('Meta App Events: consent signals differ from the reviewed template.'));
+  assert.ok(errors.includes('Meta App Events: bridge.js must import and call startMetaAppEvents.'));
+});
+
+for (const [name, edit, message] of [
+  ['the startup provider kept', (xml) => xml.replace(' tools:node="remove"', ''), 'FacebookInitProvider'],
+  ['automatic initialization on', (xml) => xml.replace('AutoInitEnabled" android:value="false"', 'AutoInitEnabled" android:value="true"'), 'AutoInitEnabled must be false'],
+  ['automatic logging unset', (xml) => xml.replace(/<meta-data android:name="com\.facebook\.sdk\.AutoLogAppEventsEnabled"[^>]*>/, ''), 'AutoLogAppEventsEnabled must be false'],
+  ['no client token', (xml) => xml.replace(/<meta-data android:name="com\.facebook\.sdk\.ClientToken"[^>]*>/, ''), 'ClientToken is missing'],
+  ['the gate only in a comment', (xml) => xml.replace(/(<provider[^>]*>)/, '<!-- $1 -->'), 'FacebookInitProvider'],
+]) test(`Meta Android rejects ${name}`, (t) => {
+  const app = metaFixture(t);
+  app.write('android/app/src/main/AndroidManifest.xml', edit(metaAndroidManifest));
+  assert.ok(app.verify().errors.some(error => error.startsWith('Meta Android') && error.includes(message)));
+});
+
+test('Meta Android rejects an overridden SDK version', (t) => {
+  const app = metaFixture(t);
+  app.append('android/variables.gradle', "\nfacebookSdkVersion = '17.0.0'");
+  assert.ok(app.verify().errors.some(error => error.includes('facebookSdkVersion must stay')));
+});
+
+test('Meta iOS rejects missing identity, automatic start, an AppDelegate start and SDK drift', (t) => {
+  const app = metaFixture(t);
+  app.write('ios/App/App/Info.plist', { ...metaInfo, FacebookClientToken: '', FacebookAutoLogAppEventsEnabled: true });
+  app.append('ios/App/App/AppDelegate.swift', '\nApplicationDelegate.shared.initializeSDK()');
+  const podLock = fs.readFileSync(path.join(app.directory, 'ios/App/Podfile.lock'), 'utf8').replace(/FBSDKCoreKit \([^)]+\)/, 'FBSDKCoreKit (17.0.0)');
+  app.write('ios/App/Podfile.lock', podLock);
+  app.write('ios/App/Pods/Manifest.lock', podLock);
+  const errors = app.verify().errors;
+  assert.ok(errors.includes('Meta iOS: FacebookClientToken is missing from Info.plist.'));
+  assert.ok(errors.includes('Meta iOS: FacebookAutoLogAppEventsEnabled must be false in Info.plist.'));
+  assert.ok(errors.includes('Meta iOS: AppDelegate must not initialize the Meta SDK.'));
+  assert.ok(errors.some(error => error.startsWith('Meta iOS: FBSDKCoreKit must resolve')));
+});
+
+test('Meta App Events is refused in the CAS variant', (t) => {
+  const app = casFixture(t);
+  const pkg = app.read('package.json');
+  pkg.dependencies[metaPackage] = manifest.metaAppEvents.dependencies[metaPackage];
+  app.write('package.json', pkg);
+  assert.ok(app.verify().errors.some(error => error.includes('CAS owns consent in its variant')));
+});
+
 test('revenue preflight rejects collector drift and missing native ILRD transport', (t) => {
   const app = fixture(t);
   const collector = fs.readFileSync(new URL('../template/platform/ads/ad-revenue.js', import.meta.url), 'utf8');

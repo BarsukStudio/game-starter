@@ -9,7 +9,14 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.36**.
+Current contract: **0.7.0**; package: **0.1.0-alpha.37**.
+Alpha.37 adds opt-in Meta App Events for paid acquisition in the AdMob/Yandex
+variant: `platform/meta-app-events.js` starts Meta's SDK only after UMP consent
+(outside GDPR, or under GDPR with storage purpose 1 and Additional Consent for
+Meta, provider 89), `consent-signals.js` exports `hasMetaConsent`, the plugin
+manifest gains a `metaAppEvents` section, and the plugin verifier checks the
+gated native setup when the dependency is declared or with `--meta`. Setup is in
+PLUGINS.md §3a. Gym is the first consumer. The contract is unchanged.
 Alpha.36 makes the ad test flag readable in GA4 reports and records two user
 properties. GA4 shows only string parameters of app events as custom
 dimensions, so the numeric `test_ads` read `(not set)` there; ad revenue and

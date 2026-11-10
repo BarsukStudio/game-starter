@@ -9,7 +9,7 @@ import vm from 'node:vm';
 const url = text => `data:text/javascript,${encodeURIComponent(text)}`;
 const signalsSource = readFileSync(new URL('../template/platform/consent-signals.js', import.meta.url), 'utf8');
 const policySource = signalsSource.slice(signalsSource.indexOf('export function hasYandexConsent'));
-const { hasYandexConsent } = await import(url(policySource));
+const { hasYandexConsent, hasMetaConsent } = await import(url(policySource));
 
 for (const [name, signals, expected] of [
   ['outside GDPR', { gdprApplies: false }, true],
@@ -24,6 +24,17 @@ for (const [name, signals, expected] of [
   ['unknown version', { gdprApplies: true, additionalConsent: '3~1033', purposeConsents: '1' }, false],
   ['missing choices', { gdprApplies: true }, false],
 ]) test(name, () => assert.equal(hasYandexConsent(signals), expected));
+
+// Meta App Events uses the same policy with Google's Additional Consent provider 89.
+for (const [name, signals, expected] of [
+  ['Meta outside GDPR', { gdprApplies: false }, true],
+  ['Meta unknown region with stale consent', { additionalConsent: '2~89', purposeConsents: '1' }, false],
+  ['Meta ACv2 consent', { gdprApplies: true, additionalConsent: '2~42.89~dv.7', purposeConsents: '1' }, true],
+  ['Meta disclosed only', { gdprApplies: true, additionalConsent: '2~1033~dv.89', purposeConsents: '1' }, false],
+  ['Meta storage refused', { gdprApplies: true, additionalConsent: '2~89', purposeConsents: '0' }, false],
+  ['Meta prefix is not the provider', { gdprApplies: true, additionalConsent: '2~890.189', purposeConsents: '1' }, false],
+  ['Yandex consent is not Meta consent', { gdprApplies: true, additionalConsent: '2~1033', purposeConsents: '1' }, false],
+]) test(name, () => assert.equal(hasMetaConsent(signals), expected));
 
 const admobSource = readFileSync(new URL('../template/platform/ads/native-admob.js', import.meta.url), 'utf8');
 const yandexSource = readFileSync(new URL('../template/platform/ads/native-yandex.js', import.meta.url), 'utf8');

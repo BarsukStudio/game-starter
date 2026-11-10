@@ -51,6 +51,8 @@ export const TEMPLATE_TREES = Object.freeze({
       '@capacitor-firebase/analytics',
       // Only the opt-in diagnostics module imports this.
       '@capacitor-firebase/crashlytics',
+      // Only the opt-in Meta App Events module imports this.
+      '@capgo/capacitor-facebook-analytics',
       'capacitor-plugin-cdv-purchase',
       'capacitor-plugin-yandex-ads',
     ]),

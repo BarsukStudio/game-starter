@@ -21,6 +21,8 @@ const firebasePlugins = {
   '@capacitor-firebase/analytics': ['CapacitorFirebaseAnalytics', 'FirebaseAnalyticsPlugin'],
   '@capacitor-firebase/crashlytics': ['CapacitorFirebaseCrashlytics', 'FirebaseCrashlyticsPlugin'],
 };
+const metaPackage = '@capgo/capacitor-facebook-analytics';
+const metaPlugin = ['CapgoCapacitorFacebookAnalytics', 'FacebookAnalyticsPlugin'];
 // Firebase Performance left the platform in alpha.30: its data went unread, and
 // removing an optional SDK lets its effect on ANRs be measured. Each setting is
 // checked in the file that owns it, with comments stripped, so a note about the
@@ -94,7 +96,7 @@ export function scanModule(source) {
   return { code, staticImports, dynamicImports };
 }
 
-export function verifyPluginSetup({ root, targets, diagnostics = false, consent = false, run = spawnSync }) {
+export function verifyPluginSetup({ root, targets, diagnostics = false, consent = false, meta = false, run = spawnSync }) {
   const errors = [];
   let checks = 0;
   function check(ok, message) {
@@ -135,6 +137,10 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
   const installedLock = json('node_modules/.package-lock.json');
   const declared = { ...pkg.dependencies, ...pkg.devDependencies };
   diagnostics ||= Boolean(declared['@capacitor-firebase/crashlytics']);
+  // Meta App Events reads the stored UMP choices, so it brings the ConsentSignals checks.
+  meta ||= Boolean(declared[metaPackage]);
+  check(!cas || !meta, 'Meta App Events: the opt-in module reads UMP choices; CAS owns consent in its variant.');
+  consent ||= meta;
   function performanceLeftovers(entries) {
     for (const [file, source, pattern] of entries) {
       const found = String(source).match(pattern)?.[0]?.trim();
@@ -147,6 +153,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
   ]);
   const groups = [manifest.platform, ...targets.filter((target) => target !== 'web').map((target) => manifest[target])];
   if (diagnostics) groups.push(manifest.diagnostics);
+  if (meta) groups.push(manifest.metaAppEvents);
   for (const section of ['dependencies', 'devDependencies']) {
     const expected = Object.assign({}, ...groups.map((group) => group[section]));
     if (cas && section === 'dependencies') {
@@ -172,7 +179,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         && installed?.version === entry.version && actual.version === entry.version, `${name}: installed metadata differs from package-lock.json; reinstall the declared dependencies.`);
     }
   }
-  const plugins = { ...nativePlugins, '@capacitor-firebase/analytics': firebasePlugins['@capacitor-firebase/analytics'], ...(diagnostics ? firebasePlugins : {}) };
+  const plugins = { ...nativePlugins, '@capacitor-firebase/analytics': firebasePlugins['@capacitor-firebase/analytics'], ...(diagnostics ? firebasePlugins : {}), ...(meta ? { [metaPackage]: metaPlugin } : {}) };
   if (cas) {
     for (const name of manifest.advertising.cas.replaces) {
       delete plugins[name];
@@ -278,6 +285,14 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     }
   }
 
+  if (meta) {
+    check(sameAsTemplate('meta-app-events.js'), 'Meta App Events: module differs from the reviewed template.');
+    check(sameAsTemplate('consent-signals.js'), 'Meta App Events: consent signals differ from the reviewed template.');
+    const bridge = scanModule(read('src/js/platform/bridge.js'));
+    check(bridge.staticImports.some((entry) => entry.specifier === './meta-app-events.js' && entry.names.includes('startMetaAppEvents'))
+      && /\bstartMetaAppEvents\s*\(/.test(bridge.code), 'Meta App Events: bridge.js must import and call startMetaAppEvents.');
+  }
+
   if (diagnostics) {
     read('src/js/platform/diagnostics.js');
     const controller = code(read('src/js/platform/index.js'));
@@ -362,6 +377,21 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
           && /class ConsentSignalsPlugin extends Plugin/.test(plugin),
           'Android consent: ConsentSignalsPlugin must declare the application package and Capacitor name.');
       }
+    }
+    if (meta) {
+      const source = xml('android/app/src/main/AndroidManifest.xml');
+      const metaData = (key) => [...source.matchAll(/<meta-data\b[^>]*>/g)].map(([tag]) => tag).find((tag) => tag.includes(`android:name="${key}"`));
+      check(/xmlns:tools="http:\/\/schemas\.android\.com\/tools"/.test(source)
+        && [...source.matchAll(/<provider\b[^>]*>/g)].some(([tag]) => tag.includes('android:name="com.facebook.internal.FacebookInitProvider"')
+          && tag.includes('tools:node="remove"')), 'Meta Android: remove com.facebook.internal.FacebookInitProvider with tools:node="remove".');
+      for (const key of ['com.facebook.sdk.AutoInitEnabled', 'com.facebook.sdk.AutoLogAppEventsEnabled']) {
+        check(metaData(key)?.includes('android:value="false"') === true, `Meta Android: ${key} must be false.`);
+      }
+      for (const key of ['com.facebook.sdk.ApplicationId', 'com.facebook.sdk.ClientToken']) {
+        check(/android:value="[^"]+"/.test(metaData(key) ?? ''), `Meta Android: ${key} is missing.`);
+      }
+      check(!/\bfacebookSdkVersion\b/.test(variables) || new RegExp(`^\\s*facebookSdkVersion\\s*=\\s*['"]${escape(manifest.metaAppEvents.androidSdkVersion)}['"]`, 'm').test(variables),
+        `Meta Android: facebookSdkVersion must stay ${manifest.metaAppEvents.androidSdkVersion}.`);
     }
     if (diagnostics) {
       for (const plugin of ['com.google.gms.google-services', 'com.google.firebase.crashlytics']) {
@@ -482,6 +512,21 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       check(included('PBXResourcesBuildPhase', 'PrivacyInfo.xcprivacy'), 'iOS consent: PrivacyInfo.xcprivacy must be in App Resources.');
     }
 
+    if (meta) {
+      const info = plist('ios/App/App/Info.plist');
+      for (const key of ['FacebookAppID', 'FacebookClientToken']) {
+        check(typeof info[key] === 'string' && info[key].length > 0, `Meta iOS: ${key} is missing from Info.plist.`);
+      }
+      for (const key of ['FacebookAutoInitEnabled', 'FacebookAutoLogAppEventsEnabled']) {
+        check(info[key] === false, `Meta iOS: ${key} must be false in Info.plist.`);
+      }
+      // The template starts the SDK itself after consent; an AppDelegate start would bypass that.
+      check(!/\bApplicationDelegate\.shared\b/.test(code(read('ios/App/App/AppDelegate.swift'))),
+        'Meta iOS: AppDelegate must not initialize the Meta SDK.');
+      check(new RegExp(`^  - FBSDKCoreKit \\(${escape(manifest.metaAppEvents.iosSdkVersion)}\\)`, 'm').test(podLock),
+        `Meta iOS: FBSDKCoreKit must resolve to ${manifest.metaAppEvents.iosSdkVersion}.`);
+    }
+
     if (diagnostics) {
       const delegate = code(read('ios/App/App/AppDelegate.swift'));
       check(/\bimport FirebaseCore\b/.test(delegate) && /\bFirebaseApp\.configure\(\)/.test(delegate), 'iOS: AppDelegate must initialize FirebaseCore.');
@@ -518,12 +563,12 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
 }
 
 function main() {
-  const { values } = parseArgs({ options: { targets: { type: 'string' }, diagnostics: { type: 'boolean' }, consent: { type: 'boolean' }, help: { type: 'boolean' } } });
+  const { values } = parseArgs({ options: { targets: { type: 'string' }, diagnostics: { type: 'boolean' }, consent: { type: 'boolean' }, meta: { type: 'boolean' }, help: { type: 'boolean' } } });
   if (values.help) {
-    console.log('Usage: barsuk-verify-plugins --targets android,ios [--diagnostics] [--consent]\nRun from the game root after install and sync. Supports web, Android Groovy and iOS CocoaPods App on macOS. Read-only; no build/device/console proof.');
+    console.log('Usage: barsuk-verify-plugins --targets android,ios [--diagnostics] [--consent] [--meta]\nRun from the game root after install and sync. Supports web, Android Groovy and iOS CocoaPods App on macOS. Read-only; no build/device/console proof.');
     return;
   }
-  const result = verifyPluginSetup({ root: process.cwd(), targets: values.targets?.split(','), diagnostics: values.diagnostics, consent: values.consent });
+  const result = verifyPluginSetup({ root: process.cwd(), targets: values.targets?.split(','), diagnostics: values.diagnostics, consent: values.consent, meta: values.meta });
   for (const error of result.errors) console.error(`FAIL: ${error}`);
   console.log(`${result.errors.length ? 'FAILED' : 'PASSED'}: ${result.checks} source/dependency checks, ${result.errors.length} errors. No native build, device or Firebase delivery was verified.`);
   process.exitCode = result.errors.length ? 1 : 0;

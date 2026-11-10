@@ -18,6 +18,7 @@ generic installer for arbitrary Xcode projects, Kotlin DSL, SPM or Electron/Taur
 | `android.dependencies`, `android.devDependencies` | Android target |
 | `ios.dependencies`, `ios.devDependencies` | iOS target |
 | `diagnostics.dependencies` | Optional Firebase diagnostics: Crashlytics and app configuration; Analytics belongs to `platform.dependencies` |
+| `metaAppEvents.dependencies` | Optional Meta App Events for paid acquisition; AdMob/Yandex variant only |
 
 The current bridge imports the app-shell and ad adapters; even web builds of
 this template must resolve their npm packages. Disabling ads or providing an
@@ -284,6 +285,84 @@ handlers. Keep the real controller under test; do not replace it with a stub.
    must run symbol upload. Do not claim upload verification after a skipped run.
 5. Check that `Info.plist` or runtime code does not disable diagnostic collection.
    Review the game's diagnostic-data disclosures before publishing this new SDK set.
+
+## 3a. Optional Meta App Events
+
+Meta needs the install and launch signal from the app to attribute and
+optimize app install campaigns. The opt-in module starts Meta's SDK only after
+consent, so the native setup below takes away every other way in. Not for the
+CAS variant, where CAS owns consent.
+
+### Consent policy
+
+The game keeps one consent flow, UMP. `startMetaAppEvents()` reads the stored
+UMP choices through ConsentSignals: outside GDPR it starts the SDK; under GDPR
+only with storage purpose 1 and Google's Additional Consent for Meta (provider
+89); an unknown region or unread choices keep it off. Meta is not a TCF vendor,
+so provider 89 reaches the Additional Consent string only when Meta is in the
+AdMob **Privacy & messaging** partner list of the GDPR message; check that before
+expecting EEA events. Once started, the SDK runs until the process ends, so a
+withdrawn choice takes effect on the next launch.
+
+### JavaScript wiring
+
+After installing `metaAppEvents.dependencies`, copy unchanged:
+
+| Source | Game destination |
+| --- | --- |
+| `template/platform/meta-app-events.js` | `src/js/platform/meta-app-events.js` |
+| `template/platform/consent-signals.js` | `src/js/platform/consent-signals.js` |
+
+Add the native ConsentSignals plugin as described in
+[Local startup and native consent](#local-startup-and-native-consent). In
+`bridge.js`, import `startMetaAppEvents` and call it without awaiting once the ad
+startup has finished, whatever its result (the `finally` of the platform
+initialization), and again after each AdMob recovery attempt: a retried consent
+flow may settle the choices later. On iOS the AdMob startup has already shown
+the tracking prompt by then. No controller method changes.
+
+### Android
+
+In `AndroidManifest.xml`, declare `xmlns:tools`, then inside `<application>`:
+
+```xml
+<meta-data android:name="com.facebook.sdk.ApplicationId" android:value="@string/facebook_app_id" />
+<meta-data android:name="com.facebook.sdk.ClientToken" android:value="@string/facebook_client_token" />
+<meta-data android:name="com.facebook.sdk.AutoInitEnabled" android:value="false" />
+<meta-data android:name="com.facebook.sdk.AutoLogAppEventsEnabled" android:value="false" />
+<provider
+    android:name="com.facebook.internal.FacebookInitProvider"
+    android:authorities="${applicationId}.FacebookInitProvider"
+    tools:node="remove" />
+```
+
+The SDK's startup provider calls `sdkInitialize` on every launch whatever the
+flags say, so removing it is what keeps the SDK off before consent. The App ID
+and client token come from the game's own Meta developer app (Settings →
+Advanced → Security), not from its Audience Network placements. The client token
+ships inside the app; it is not a server secret. Keep the plugin's default SDK
+(`metaAppEvents.androidSdkVersion`); do not set `facebookSdkVersion`. The SDK
+adds `ACCESS_ADSERVICES_CUSTOM_AUDIENCE` to the merged manifest; review the
+game's data-safety declaration before release.
+
+### iOS
+
+Add to `Info.plist`: `FacebookAppID`, `FacebookClientToken`,
+`FacebookDisplayName`, and `FacebookAutoInitEnabled` and
+`FacebookAutoLogAppEventsEnabled` set to `false`. Do not call
+`ApplicationDelegate.shared` from `AppDelegate`: the module initializes the SDK
+itself. `cap sync ios` resolves FBSDKCoreKit to `metaAppEvents.iosSdkVersion`.
+Meta's SKAdNetwork identifiers belong in `SKAdNetworkItems`; the AdMob list
+usually carries them already.
+
+### Acceptance
+
+Run the verifier; it detects the dependency or takes `--meta`, and it brings the
+ConsentSignals checks with it. Then, per platform on a device: a first launch
+outside the EEA sends Meta's activation; an EEA refusal sends nothing to Meta;
+an EEA acceptance sends it from that launch on; Events Manager shows the app's
+install and launch events. A Meta developer app in development mode may not
+feed ads reporting; switching it to live is a separate owner decision.
 
 ## 4. Build, sync and verify
 

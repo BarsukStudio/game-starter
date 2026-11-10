@@ -60,6 +60,13 @@
     },
     "iosSdkVersion": "12.19.0"
   },
+  "metaAppEvents": {
+    "dependencies": {
+      "@capgo/capacitor-facebook-analytics": "8.1.19"
+    },
+    "androidSdkVersion": "18.2.3",
+    "iosSdkVersion": "18.1.1"
+  },
   "localArchives": {
     "@barsuk/game-runtime": {
       "version": "0.2.2",

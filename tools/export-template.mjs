@@ -9,6 +9,8 @@ const template = fileURLToPath(new URL('../template/', import.meta.url));
 export const CAS_EXCLUDED_FILES = Object.freeze([
   'platform/ads/native-admob.js', 'platform/ads/native-yandex.js',
   'platform/ads/native-ad-events.js', 'platform/consent-signals.js',
+  // Meta App Events reads UMP choices; CAS owns consent in its variant.
+  'platform/meta-app-events.js',
   'scripts/admob-files.json', 'scripts/verify-admob.mjs',
   'scripts/patch-native-ad-events.mjs', 'scripts/patches/native-ad-request-ids.patch',
   'scripts/ad-revenue-test.mjs', 'scripts/ad-revenue-wiring-check.mjs',
