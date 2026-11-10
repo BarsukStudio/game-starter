@@ -122,7 +122,7 @@ function scheduleBannerRetry() {
 }
 
 function requestBanner() {
-  if (!bannerOptions || deps.isAdsRemoved()) return;
+  if (!consentInfo.canRequestAds || !bannerOptions || deps.isAdsRemoved()) return;
   if (document.visibilityState === 'hidden') {
     bannerFailed = true;
     return;
@@ -190,16 +190,19 @@ async function bindBannerRecovery() {
 // an owner gets rewarded options but never interstitial ones, so one shared
 // readiness answer would let the bridge open a load that can never settle.
 export function isInterstitialReady() {
-  return Boolean(interstitialOptions);
+  return consentInfo.canRequestAds && Boolean(interstitialOptions);
 }
 
 export function isRewardedReady() {
-  return Boolean(rewardOptions);
+  return consentInfo.canRequestAds && Boolean(rewardOptions);
 }
 
 // Cache user decisions; only technical failures allow an event-driven retry.
 let consentPromise = null;
 let consentRetryable = false;
+// Every request and show re-reads this rather than trusting that init passed
+// the gate once: banner recovery and load retries outlive init, and consent
+// read later (privacy form, a retried UMP flow) must still stop them.
 let consentInfo = { canRequestAds: false, privacyOptionsRequired: false };
 
 export function getNativeConsentInfo() {
@@ -404,6 +407,7 @@ async function initialize(injected) {
 // Throws on purpose when the plugin does: the bridge's show entry point owns the
 // catch that turns it into a `showFailed`.
 export async function showInterstitial() {
+  if (!consentInfo.canRequestAds) throw new Error('UMP does not allow advertising requests');
   const scope = beginPresentation('interstitial');
   try {
     await AdMob.showInterstitial();
@@ -415,6 +419,7 @@ export async function showInterstitial() {
 }
 
 export async function showRewarded() {
+  if (!consentInfo.canRequestAds) throw new Error('UMP does not allow advertising requests');
   const scope = beginPresentation('rewarded');
   // The stock Android/iOS promise resolves only when the SDK earns a reward.
   // Use this per-call channel, not the uncorrelated global Rewarded event.
@@ -432,6 +437,7 @@ export async function showRewarded() {
 }
 
 export function preloadInterstitial() {
+  if (!consentInfo.canRequestAds) return;
   const scope = deps.interstitial.captureLoad();
   void Promise.resolve()
     .then(() => AdMob.prepareInterstitial(interstitialOptions))
@@ -442,6 +448,7 @@ export function preloadInterstitial() {
 }
 
 export function preloadRewarded() {
+  if (!consentInfo.canRequestAds) return;
   const scope = deps.rewarded.captureLoad();
   void Promise.resolve()
     .then(() => AdMob.prepareRewardVideoAd(rewardOptions))
@@ -469,6 +476,7 @@ export function removeBanner() {
 // This does not initialize AdMob or grant Yandex data-processing consent.
 export async function requestIosTrackingAuthorization() {
   if (getNativeKey() !== 'ios') return;
+  if (document.visibilityState === 'hidden') await waitForConsentRetry(0);
   try {
     const trackingInfo = await AdMob.trackingAuthorizationStatus();
     if (trackingInfo.status === 'notDetermined') {

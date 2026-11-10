@@ -13,6 +13,7 @@ import { PLATFORM_CALLBACKS, PLATFORM_INITIALIZER_INPUTS } from '../manifest.js'
 const INPUT_SENTINELS = {
   locale: 'en-US',
   removeAdsFlag: false,
+  firstScreenReady: Promise.resolve(),
   verbose: false,
 };
 
@@ -168,3 +169,61 @@ cases.push({
     assert.deepEqual(replacement.log, [], 'repeat init must not replace the live callback bag');
   },
 });
+
+// Contract 0.8.0: a native build holds ad SDK startup for the game's first
+// screen. Found in Gym 1.8.6 ANR reports (2026-11): cold-start hangs with an ad
+// mediation adapter initializing on the UI thread while the first frames drew.
+// Observed through the SDK stand-in's own start count, so a platform that only
+// delayed its ad callbacks would still fail.
+const reachSdk = () => new Promise((resolve) => setImmediate(resolve));
+
+function heldStartup({ createController, controls }) {
+  const controller = createController();
+  controls.ads.available(true);
+  let reveal, refuse;
+  const firstScreenReady = new Promise((resolve, reject) => { reveal = resolve; refuse = reject; });
+  const recorder = recordCallbacks('initializePlatformServices', { locale: 'en-US', removeAdsFlag: false, firstScreenReady });
+  let settled = false;
+  const initialized = controller.initializePlatformServices(recorder.bag).then(() => { settled = true; });
+  return { controller, recorder, initialized, reveal, refuse, isSettled: () => settled };
+}
+
+cases.push(...['native-admob-ads', 'native-yandex-ads'].flatMap(environment => [{
+  name: `${environment}: ad startup waits for the first screen and runs once`,
+  environment,
+  async run(harness) {
+    const { controller, recorder, initialized, reveal, isSettled } = heldStartup(harness);
+    const repeat = controller.initializePlatformServices(recordCallbacks('initializePlatformServices', { locale: 'en-US', removeAdsFlag: false }).bag);
+    await reachSdk();
+    assert.equal(harness.controls.ads.sdkStarts(), 0, 'no ad SDK may start before the first screen');
+    assert.equal(isSettled(), false, 'the initializer resolves only once advertising has started');
+    controller.preloadInterstitialAd();
+    assert.equal(await controller.showInterstitialAd(), false);
+    assert.equal(harness.controls.ads.showCount(), 0);
+
+    reveal();
+    await Promise.all([initialized, repeat]);
+    await reachSdk();
+    assert.equal(harness.controls.ads.sdkStarts(), 1, 'the first screen starts the SDK, and a repeat call does not again');
+    controller.preloadInterstitialAd();
+    await reachSdk();
+    controller.showInterstitialAd().catch(() => {});
+    await reachSdk();
+    assert.equal(harness.controls.ads.showCount(), 1, 'advertising works once the screen is up');
+    harness.controls.ads.interstitial.present();
+    harness.controls.ads.interstitial.complete();
+    await reachSdk();
+    assert.ok(recorder.names().includes('onInterstitialClosed'));
+  },
+}, {
+  name: `${environment}: a failed first-screen signal still starts advertising`,
+  environment,
+  async run(harness) {
+    const { initialized, refuse } = heldStartup(harness);
+    await reachSdk();
+    assert.equal(harness.controls.ads.sdkStarts(), 0);
+    refuse(new Error('intro failed'));
+    await initialized;
+    assert.equal(harness.controls.ads.sdkStarts(), 1);
+  },
+}]));

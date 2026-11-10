@@ -313,13 +313,35 @@ export async function initializePlatformServices(callbacks) {
   // or lower an entitlement while SDK listeners from the first boot still live.
   if (!platformInitialization) {
     adsInitializing = true;
-    platformInitialization = initializeAds(callbacks).finally(() => {
-      adsInitializing = false;
-      if (admobRecoveryRequested) recoverAdmobOnResume();
-      if (yandexRecoveryRequested) recoverYandexOnResume();
-    });
+    // Unheld startup stays synchronous: the ad adapters bind their recovery
+    // listeners in the same turn the game calls this, as they always have.
+    const held = isNative && callbacks.firstScreenReady;
+    platformInitialization = (held
+      ? waitForFirstScreen(callbacks.firstScreenReady).then(() => initializeAds(callbacks))
+      : initializeAds(callbacks))
+      .finally(() => {
+        adsInitializing = false;
+        if (admobRecoveryRequested) recoverAdmobOnResume();
+        if (yandexRecoveryRequested) recoverYandexOnResume();
+      });
   }
   return platformInitialization;
+}
+
+// Native ad SDKs (and the mediation adapters they start) initialize on the UI
+// thread, so a cold start that runs them while the WebView draws its first
+// frames competes with that work on weak devices. A game that passes
+// `firstScreenReady` holds that startup until its first screen is up. Portal
+// SDKs are not held: a portal expects its SDK early, and the game may ask it
+// for the interface language. Without the signal nothing waits, which keeps
+// consumers that predate it unchanged. A failed signal still starts ads — a
+// broken intro must not cost a launch its advertising.
+async function waitForFirstScreen(firstScreenReady) {
+  try {
+    await firstScreenReady;
+  } catch (error) {
+    console.warn('First-screen signal failed; starting ads anyway', error);
+  }
 }
 
 export function getPrivacyOptionsState() {
@@ -571,6 +593,8 @@ export async function showInterstitialAd() {
     state.callbacks.onInterstitialShowFailed?.(new Error('Advertising stopped after privacy options'));
     return false;
   }
+  if (state.provider === 'admob-native' && nativeAdmob.hasPresentation()
+    && !['interstitial', 'rewarded'].some(nativeAdmob.isPresentationUnresolved)) return false;
   if (state.provider === 'yandex-native' && nativeYandex.hasPresentation()
     && !['interstitial', 'rewarded'].some(nativeYandex.isPresentationUnresolved)) return false;
   const lifecycle = state.interstitialLifecycle;
@@ -622,6 +646,8 @@ export async function showRewardedAd(onRewardConfirmed) {
   if (reportUnresolvedPresentation('rewarded', () => {
     state.callbacks.onRewardedShowFailed?.(new Error('Ad presentation state is unknown'));
   })) return false;
+  if (state.provider === 'admob-native' && nativeAdmob.hasPresentation()
+    && !['interstitial', 'rewarded'].some(nativeAdmob.isPresentationUnresolved)) return false;
   if (state.provider === 'yandex-native' && nativeYandex.hasPresentation()) return false;
   const lifecycle = state.rewardedLifecycle;
   if (!lifecycle.beginShow()) return false;

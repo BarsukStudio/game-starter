@@ -9,7 +9,17 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.7.0**; package: **0.1.0-alpha.37**.
+Current contract: **0.8.0**; package: **0.1.0-alpha.38**.
+Alpha.38 (contract 0.8.0) lets a game hold native ad startup for its first
+screen. `initializePlatformServices` accepts an optional `firstScreenReady`
+thenable; on a native build no ad SDK starts and the initializer does not
+resolve before it settles (a rejection still starts ads), while portal builds and
+games that omit it start at once, as before. Purchases are not held. A refused
+second fullscreen format now reports no failure callback. The AdMob adapter
+re-checks UMP `canRequestAds` on every request and show, and the bridge refuses a
+second AdMob presentation, both taken from Gym2. New `barsuk-verify-template`
+fails on copied template files that differ from the pinned template without a
+reviewed entry in the game's `template-divergence.json`.
 Alpha.37 adds opt-in Meta App Events for paid acquisition in the AdMob/Yandex
 variant: `platform/meta-app-events.js` starts Meta's SDK only after UMP consent
 (outside GDPR, or under GDPR with storage purpose 1 and Additional Consent for
@@ -195,6 +205,11 @@ and files changed on both sides. It never overwrites game policy or native setti
 Review `review-both` files and missing optional modules explicitly; copying the
 whole platform tree is not an update strategy. Native patch changes travel with
 their adapters and regression tests.
+
+After the update, `barsuk-verify-template --root /path/to/game` must pass (AdMob
+consumers). It fails on any copied file that differs from the pinned template
+unless `template-divergence.json` records a reason and the sha256 of both sides,
+so an edit to either side needs a fresh review. The failure prints the hashes.
 
 Runtime 0.2.2 adds SDK inventory availability without resetting presentations or
 rewards. Runtime 0.2.1 fixes confirmation deadlines and dispatch-attempt identity in

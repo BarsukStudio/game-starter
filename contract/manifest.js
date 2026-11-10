@@ -20,7 +20,7 @@
 //
 // It does not become `1.0.0` before a second consumer has been through it —
 // step 6 may still find a breaking problem.
-export const CONTRACT_VERSION = '0.7.0';
+export const CONTRACT_VERSION = '0.8.0';
 
 // Every method `createPlatformController()` hands the game, and nothing else.
 // Sorted so a diff over this array is a diff over the contract rather than over
@@ -181,6 +181,11 @@ export const PLATFORM_INITIALIZER_INPUTS = Object.freeze({
   initializePlatformServices: Object.freeze([
     'locale',
     'removeAdsFlag',
+    // Optional thenable: the game's first screen is up (contract 0.8.0). While
+    // it is pending a native build starts no ad SDK, and the initializer does
+    // not resolve. A rejection still starts the SDK. Portal builds are not
+    // held, and a game that omits it starts ads at once, as before.
+    'firstScreenReady',
   ]),
   initializePurchaseStore: Object.freeze([
     'verbose',

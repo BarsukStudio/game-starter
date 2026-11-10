@@ -29,7 +29,7 @@ function show(provider, format, options = {}) {
 }
 export const AdMob = {
   addListener,
-  async initialize() {},
+  async initialize() { calls.push(['initialize', 'admob']); },
   async requestConsentInfo() { return { canRequestAds: true, status: 'OBTAINED', privacyOptionsRequirementStatus: 'REQUIRED' }; },
   async trackingAuthorizationStatus() { return { status: 'denied' }; },
   async showPrivacyOptionsForm() {},
@@ -43,7 +43,7 @@ export const AdMob = {
 };
 export const YandexAds = {
   addListener,
-  async initialize() {},
+  async initialize() { calls.push(['initialize', 'yandex']); },
   async resetAds() {},
   async setUserConsent() {},
   async showBanner() {},
@@ -99,6 +99,7 @@ export const ads = {
   interstitial: slot('interstitial'),
   rewarded: slot('rewarded'),
   showCount: () => calls.filter(([method]) => method === 'show').length,
+  sdkStarts: () => calls.filter(([method]) => method === 'initialize').length,
   emitBanner: (event, payload = {}) => emit(event, payload),
 };
 

@@ -326,14 +326,18 @@ export const nativeCases = ['native-admob-ads', 'native-yandex-ads'].flatMap(env
     name: `${environment}: ${format} reserves both formats until native termination`,
     environment,
     async run(harness) {
-      const { controller } = await started(harness);
+      const { controller, names } = await started(harness);
       const other = format === 'rewarded' ? 'interstitial' : 'rewarded';
       const method = kind => kind === 'rewarded' ? 'showRewardedAd' : 'showInterstitialAd';
       startShow(controller[method(format)]());
       await reachSdk();
       const calls = harness.controls.ads.showCount();
+      const otherFailed = `on${other === 'rewarded' ? 'Rewarded' : 'Interstitial'}ShowFailed`;
       assert.equal(await controller[method(other)](), false);
       assert.equal(harness.controls.ads.showCount(), calls);
+      // A refusal, not a failure: a failure callback here would resume the
+      // game underneath the ad that is still on screen (contract 0.8.0).
+      assert.equal(count(names(), otherFailed), 0, 'a refused second format reports no failure');
       harness.controls.clock.runAll();
       await reachSdk();
       assert.equal(await controller[method(other)](), false);

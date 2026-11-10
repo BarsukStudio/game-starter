@@ -65,6 +65,8 @@ test('the canonical cases are exactly these', () => {
           ...adCases.map(({ name }) => `${environment}: ${name}`),
           ...['interstitial', 'rewarded'].map(format => `${environment}: ${format} reserves both formats until native termination`),
           ...['legacy', 'bound'].map(path => `${environment}: ${path} rewarded dismissed without a reward pays nothing`),
+          `${environment}: ad startup waits for the first screen and runs once`,
+          `${environment}: a failed first-screen signal still starts advertising`,
         ])].sort(),
         'a case joining or leaving the contract is an edit to this list'
     );
