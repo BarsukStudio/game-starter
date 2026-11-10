@@ -476,10 +476,13 @@ export function removeBanner() {
 // This does not initialize AdMob or grant Yandex data-processing consent.
 export async function requestIosTrackingAuthorization() {
   if (getNativeKey() !== 'ios') return;
-  if (document.visibilityState === 'hidden') await waitForConsentRetry(0);
   try {
     const trackingInfo = await AdMob.trackingAuthorizationStatus();
     if (trackingInfo.status === 'notDetermined') {
+      // Checked after the status read, not before it: the app can leave the
+      // foreground while that call is pending, and iOS drops a prompt asked
+      // for in the background.
+      if (document.visibilityState === 'hidden') await waitForConsentRetry(0);
       await AdMob.requestTrackingAuthorization();
     }
   } catch (error) {

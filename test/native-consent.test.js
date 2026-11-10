@@ -181,6 +181,16 @@ for (const provider of ['admob', 'yandex']) {
     assert.equal(f.calls.filter(call => call === 'att-form').length, 1);
     assert.ok(f.calls.includes('preload-rewarded'));
   });
+  test(`${provider}: an ATT prompt waits for the foreground the app left during the status read`, async () => {
+    const f = await fixture();
+    f.sdk.trackingAuthorizationStatus = async () => { f.calls.push('att'); f.visibility('hidden'); return { status: 'notDetermined' }; };
+    const request = f.admob.requestIosTrackingAuthorization();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(f.calls, ['att'], 'no prompt may be asked for in the background');
+    f.visibility('visible');
+    await request;
+    assert.deepEqual(f.calls, ['att', 'att-form']);
+  });
   test(`${provider}: an ATT bridge failure does not block advertising initialization`, async () => {
     const f = await fixture({ attError: true });
     assert.equal(await f[provider].init(f.deps), true);
