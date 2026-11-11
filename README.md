@@ -9,7 +9,13 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.8.0**; package: **0.1.0-alpha.38**.
+Current contract: **0.8.0**; package: **0.1.0-alpha.39**.
+Alpha.39 fixes two gaps in the opt-in Meta App Events module. On Android it now
+logs the launch event (`fb_mobile_activate_app`) after starting the SDK, since
+facebook-core drops its own while automatic logging is off; iOS already sent it.
+PLUGINS.md §3a now starts Meta only after an AdMob startup or recovery that
+returned ready, so the UMP flow and the iOS tracking prompt have run in that
+launch. The contract is unchanged.
 Alpha.38 (contract 0.8.0) lets a game hold native ad startup for its first
 screen. `initializePlatformServices` accepts an optional `firstScreenReady`
 thenable; on a native build no ad SDK starts and the initializer does not

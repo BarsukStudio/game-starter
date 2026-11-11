@@ -1,6 +1,6 @@
 import { FacebookAnalytics } from '@capgo/capacitor-facebook-analytics';
 import { readConsentSignals, hasMetaConsent } from './consent-signals.js';
-import { isNative } from './env.js';
+import { isNative, nativePlatform } from './env.js';
 
 // Opt-in Meta App Events for paid acquisition: the install and launch signal
 // Meta needs to attribute and optimize app install campaigns. Android and iOS
@@ -8,7 +8,8 @@ import { isNative } from './env.js';
 //
 // The native setup removes the SDK's startup provider and turns automatic
 // initialization and logging off, so this call is the SDK's only way in. Call it
-// after the advertising consent flow and the iOS tracking prompt have finished.
+// only after an AdMob startup that completed, so the consent flow and the iOS
+// tracking prompt have run in this launch; an early failure has run neither.
 // It reads the stored UMP choices itself: outside GDPR it starts; under GDPR only
 // with storage purpose 1 and Meta's Additional Consent; anything unknown keeps
 // it off. A refusal or a failure is not cached, so a later call after a retried
@@ -29,6 +30,10 @@ async function start() {
     if (!hasMetaConsent(await readConsentSignals())) return false;
     await FacebookAnalytics.initAppEvents();
     started = true;
+    // With automatic logging off, facebook-core drops its own launch event (the
+    // install ping still goes out), so Android logs it explicitly. FBSDKCoreKit
+    // already logs it as an explicit event; logging it again would double it.
+    if (nativePlatform === 'android') await FacebookAnalytics.logEvent({ event: 'fb_mobile_activate_app' });
   } catch (error) {
     console.warn('Meta App Events start failed', error);
   }

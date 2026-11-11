@@ -315,11 +315,14 @@ After installing `metaAppEvents.dependencies`, copy unchanged:
 
 Add the native ConsentSignals plugin as described in
 [Local startup and native consent](#local-startup-and-native-consent). In
-`bridge.js`, import `startMetaAppEvents` and call it without awaiting once the ad
-startup has finished, whatever its result (the `finally` of the platform
-initialization), and again after each AdMob recovery attempt: a retried consent
-flow may settle the choices later. On iOS the AdMob startup has already shown
-the tracking prompt by then. No controller method changes.
+`bridge.js`, import `startMetaAppEvents` and call it without awaiting right
+after the AdMob startup returns ready, and again after each AdMob recovery that
+returns ready: a retried consent flow may settle the choices only then. A ready
+AdMob startup has run the UMP flow and, on iOS, the tracking prompt in this
+launch; a failed one may have stopped before either, so it must not start Meta.
+The Yandex and ad-free routes never run UMP and do not start Meta. On Android
+the module logs the launch event itself, because facebook-core drops its own
+while automatic logging is off. No controller method changes.
 
 ### Android
 
