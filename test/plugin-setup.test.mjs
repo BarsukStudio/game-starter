@@ -330,7 +330,46 @@ test('Meta mediation adapter needs the localhost cleartext exception and nothing
   const wide = metaMediationFixture(t, {
     securityConfig: '<network-security-config><base-config cleartextTrafficPermitted="true"/><domain-config cleartextTrafficPermitted="true"><domain>127.0.0.1</domain></domain-config></network-security-config>',
   });
-  assert.ok(wide.verify().errors.some((error) => error.includes('not in base-config')));
+  assert.ok(wide.verify().errors.some((error) => error.includes('or in base-config')));
+});
+
+test('Meta mediation cleartext stays limited to 127.0.0.1 across every domain-config', (t) => {
+  for (const securityConfig of [
+    // An extra permitting block for another host.
+    '<network-security-config><domain-config cleartextTrafficPermitted="true"><domain>127.0.0.1</domain></domain-config><domain-config cleartextTrafficPermitted="true"><domain>example.org</domain></domain-config></network-security-config>',
+    // Another host inside the loopback block.
+    '<network-security-config><domain-config cleartextTrafficPermitted="true"><domain>127.0.0.1</domain><domain>example.org</domain></domain-config></network-security-config>',
+  ]) {
+    const errors = metaMediationFixture(t, { securityConfig }).verify().errors;
+    assert.ok(errors.some((error) => error.includes('not to other domains')), securityConfig);
+  }
+  // A nested block that denies loopback cleartext again.
+  const nested = metaMediationFixture(t, {
+    securityConfig: '<network-security-config><domain-config cleartextTrafficPermitted="true"><domain>127.0.0.1</domain><domain-config cleartextTrafficPermitted="false"><domain>127.0.0.1</domain></domain-config></domain-config></network-security-config>',
+  });
+  assert.ok(nested.verify().errors.some((error) => error.includes('cleartext to 127.0.0.1')));
+});
+
+test('a Gradle variable as the Meta adapter version still wakes the checks and fails the pin', (t) => {
+  const app = metaMediationFixture(t);
+  for (const file of ['scripts/build.config.mjs', 'android/app/capacitor.build.gradle']) {
+    const source = fs.readFileSync(path.join(app.directory, file), 'utf8');
+    app.write(file, source.replace(/facebook:[\d.]+/, 'facebook:$metaAdapterVersion'));
+  }
+  app.write('android/app/src/main/AndroidManifest.xml', '<manifest><application/></manifest>');
+  const errors = app.verify().errors;
+  assert.ok(errors.some((error) => error.includes('found $metaAdapterVersion')));
+  assert.ok(errors.some((error) => error.includes('cleartext to 127.0.0.1')));
+});
+
+test('a Meta pod inside the regenerated capacitor_pods block fails', (t) => {
+  const app = metaMediationFixture(t);
+  const pin = manifest.advertising.admob.mediation.meta.iosAdapter;
+  const podfile = fs.readFileSync(path.join(app.directory, 'ios/App/Podfile'), 'utf8')
+    .replace(`pod 'GoogleMobileAdsMediationFacebook', '${pin}'`, '');
+  app.write('ios/App/Podfile', podfile.replace(`platform :ios, '${manifest.ios.deploymentTarget}'\n`,
+    `platform :ios, '${manifest.ios.deploymentTarget}'\ndef capacitor_pods\n  pod 'GoogleMobileAdsMediationFacebook', '${pin}'\nend\n`));
+  assert.ok(app.verify().errors.some((error) => error.includes('outside def capacitor_pods')));
 });
 
 test('Meta mediation adapter requires both Meta SKAdNetwork identifiers', (t) => {

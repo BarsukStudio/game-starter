@@ -413,7 +413,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     // line kept in build.config.mjs but lost from the generated Gradle file after a
     // plain `cap sync` would otherwise drop the adapter without a word.
     const buildConfig = fs.existsSync(path.join(root, 'scripts/build.config.mjs')) ? code(read('scripts/build.config.mjs')) : '';
-    const metaAdapter = /com\.google\.ads\.mediation:facebook:([\w.+-]+)/g;
+    // Any version token counts as a declaration, so a Gradle variable still wakes
+    // the checks and then fails the literal pin instead of skipping them.
+    const metaAdapter = /com\.google\.ads\.mediation:facebook:([^"'\s)]+)/g;
     const metaDeclarations = [
       ['scripts/build.config.mjs', buildConfig],
       ['android/app/capacitor.build.gradle', generated],
@@ -431,12 +433,16 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       const application = xml('android/app/src/main/AndroidManifest.xml').match(/<application\b[^>]*>/)?.[0] ?? '';
       const configName = application.match(/android:networkSecurityConfig\s*=\s*"@xml\/([\w.]+)"/)?.[1];
       const securityConfig = configName ? xml(`android/app/src/main/res/xml/${configName}.xml`) : '';
-      const localhostCleartext = [...securityConfig.matchAll(/<domain-config\b[^>]*>[\s\S]*?<\/domain-config>/g)].some(([block]) =>
-        /cleartextTrafficPermitted\s*=\s*"true"/.test(block) && /<domain\b[^>]*>\s*127\.0\.0\.1\s*<\/domain>/.test(block));
-      check(Boolean(configName) && localhostCleartext,
+      // The file exists for that exception alone, so it is read as a whole rather
+      // than block by block: every domain-config permits cleartext and names only
+      // 127.0.0.1. Nested or extra blocks would need a parser to judge safely.
+      const domainConfigs = [...securityConfig.matchAll(/<domain-config\b[^>]*>/g)].map(([tag]) => tag);
+      const domains = [...securityConfig.matchAll(/<domain\b[^>]*>\s*([^<\s]+)\s*<\/domain>/g)].map((match) => match[1]);
+      check(Boolean(configName) && domainConfigs.length > 0 && domains.includes('127.0.0.1')
+        && domainConfigs.every((tag) => /cleartextTrafficPermitted\s*=\s*"true"/.test(tag)),
         'Meta mediation Android: <application> needs android:networkSecurityConfig allowing cleartext to 127.0.0.1 for the Audience Network media cache.');
-      check(!/<base-config\b[^>]*cleartextTrafficPermitted\s*=\s*"true"/.test(securityConfig),
-        'Meta mediation Android: the network security config may allow cleartext only to 127.0.0.1, not in base-config.');
+      check(domains.every((domain) => domain === '127.0.0.1') && !/<base-config\b[^>]*cleartextTrafficPermitted\s*=\s*"true"/.test(securityConfig),
+        'Meta mediation Android: the network security config may allow cleartext only to 127.0.0.1, not to other domains or in base-config.');
     }
   }
 
@@ -582,6 +588,11 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     }
     if (/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(podfile)) {
       const meta = manifest.advertising.admob.mediation.meta;
+      // `cap sync ios` rewrites the body of capacitor_pods, so a pod placed there
+      // vanishes on the next sync, and with it every check below.
+      const ownPods = podfile.replace(/^\s*def\s+capacitor_pods\b[\s\S]*?^\s*end\b/m, '');
+      check(/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(ownPods),
+        "Meta mediation iOS: declare GoogleMobileAdsMediationFacebook in target 'App', outside def capacitor_pods.");
       check(new RegExp(`^\\s*pod\\s+['"]GoogleMobileAdsMediationFacebook['"]\\s*,\\s*['"]${escape(meta.iosAdapter)}['"]`, 'm').test(podfile),
         `Meta mediation iOS: pin GoogleMobileAdsMediationFacebook ${meta.iosAdapter} in the Podfile.`);
       check(new RegExp(`^  - GoogleMobileAdsMediationFacebook \\(${escape(meta.iosAdapter)}\\)`, 'm').test(podLock),
