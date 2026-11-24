@@ -408,6 +408,36 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         .find((value) => value.includes('"firebase_crashlytics_collection_enabled"'));
       check(!tag || !tag.includes('android:value="false"'), 'Android: firebase_crashlytics_collection_enabled disables diagnostics.');
     }
+    // Mediation stays game-owned, so these checks wake only when the game declares
+    // the Meta adapter. The declaration is read from every file that may own it: a
+    // line kept in build.config.mjs but lost from the generated Gradle file after a
+    // plain `cap sync` would otherwise drop the adapter without a word.
+    const buildConfig = fs.existsSync(path.join(root, 'scripts/build.config.mjs')) ? code(read('scripts/build.config.mjs')) : '';
+    const metaAdapter = /com\.google\.ads\.mediation:facebook:([\w.+-]+)/g;
+    const metaDeclarations = [
+      ['scripts/build.config.mjs', buildConfig],
+      ['android/app/capacitor.build.gradle', generated],
+      ['android/app/build.gradle', appGradle],
+    ].flatMap(([file, source]) => [...source.matchAll(metaAdapter)].map((match) => [file, match[1]]));
+    if (metaDeclarations.length) {
+      const pin = manifest.advertising.admob.mediation.meta.androidAdapter;
+      for (const [file, version] of metaDeclarations) {
+        check(version === pin, `Meta mediation Android: ${file} must pin com.google.ads.mediation:facebook:${pin}, found ${version}.`);
+      }
+      check(!buildConfig.match(metaAdapter) || Boolean(generated.match(metaAdapter)),
+        'Meta mediation Android: the adapter declared in scripts/build.config.mjs is missing from capacitor.build.gradle; run cap:sync:android.');
+      // Audience Network caches video through a local proxy on 127.0.0.1, which
+      // Android 9+ blocks as cleartext unless the app allows that one host.
+      const application = xml('android/app/src/main/AndroidManifest.xml').match(/<application\b[^>]*>/)?.[0] ?? '';
+      const configName = application.match(/android:networkSecurityConfig\s*=\s*"@xml\/([\w.]+)"/)?.[1];
+      const securityConfig = configName ? xml(`android/app/src/main/res/xml/${configName}.xml`) : '';
+      const localhostCleartext = [...securityConfig.matchAll(/<domain-config\b[^>]*>[\s\S]*?<\/domain-config>/g)].some(([block]) =>
+        /cleartextTrafficPermitted\s*=\s*"true"/.test(block) && /<domain\b[^>]*>\s*127\.0\.0\.1\s*<\/domain>/.test(block));
+      check(Boolean(configName) && localhostCleartext,
+        'Meta mediation Android: <application> needs android:networkSecurityConfig allowing cleartext to 127.0.0.1 for the Audience Network media cache.');
+      check(!/<base-config\b[^>]*cleartextTrafficPermitted\s*=\s*"true"/.test(securityConfig),
+        'Meta mediation Android: the network security config may allow cleartext only to 127.0.0.1, not in base-config.');
+    }
   }
 
   if (targets.includes('ios')) {
@@ -548,6 +578,18 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       for (const input of dsymInputs) check(inputs.includes(input), `iOS: Crashlytics input missing: ${input}`);
       if (settings.some((config) => config.ENABLE_USER_SCRIPT_SANDBOXING === 'YES' && config.ENABLE_DEBUG_DYLIB === 'YES')) {
         check(inputs.includes('${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}.debug.dylib'), 'iOS: sandboxed debug dylib builds require the debug dylib dSYM input.');
+      }
+    }
+    if (/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(podfile)) {
+      const meta = manifest.advertising.admob.mediation.meta;
+      check(new RegExp(`^\\s*pod\\s+['"]GoogleMobileAdsMediationFacebook['"]\\s*,\\s*['"]${escape(meta.iosAdapter)}['"]`, 'm').test(podfile),
+        `Meta mediation iOS: pin GoogleMobileAdsMediationFacebook ${meta.iosAdapter} in the Podfile.`);
+      check(new RegExp(`^  - GoogleMobileAdsMediationFacebook \\(${escape(meta.iosAdapter)}\\)`, 'm').test(podLock),
+        `Meta mediation iOS: GoogleMobileAdsMediationFacebook must resolve to ${meta.iosAdapter}.`);
+      const items = plist('ios/App/App/Info.plist').SKAdNetworkItems;
+      const declared = new Set((Array.isArray(items) ? items : []).map((item) => String(item?.SKAdNetworkIdentifier ?? '').toLowerCase()));
+      for (const id of meta.skAdNetworkIds) {
+        check(declared.has(id), `Meta mediation iOS: SKAdNetworkItems in Info.plist must include ${id}.`);
       }
     }
   }

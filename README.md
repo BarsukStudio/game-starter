@@ -9,7 +9,13 @@ the transport layer a game bundles, and `scripts/`, the build, sync and release
 scripts it runs under Node — plus `schemas/`, which states what a consumer's two
 config files must provide and is imported from this package rather than copied.
 
-Current contract: **0.8.0**; package: **0.1.0-alpha.39**.
+Current contract: **0.8.0**; package: **0.1.0-alpha.40**.
+Alpha.40 pins the Meta Audience Network bidding adapter (Android and iOS
+6.22.1.0, matching the pinned Google Mobile Ads SDKs). PLUGINS.md describes the
+setup: one Gradle line, one pod, a localhost-only cleartext exception for Meta's
+media cache, and Meta's SKAdNetwork IDs. No code is added. When a game declares
+the adapter, the verifier checks all of it, including a line that build.config
+still declares but the generated Gradle file lost. The contract is unchanged.
 Alpha.39 fixes two gaps in the opt-in Meta App Events module. On Android it now
 logs the launch event (`fb_mobile_activate_app`) after starting the SDK, since
 facebook-core drops its own while automatic logging is off; iOS already sent it.

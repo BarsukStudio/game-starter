@@ -86,7 +86,29 @@ existing blocks; never overwrite an entire native file with a snippet.
   **outside** `def capacitor_pods`, which Capacitor regenerates. Preserve the
   lockfile. Do not resurrect disabled adapters or copy stale `OTHER_LDFLAGS`.
   Mediation network choice, versions and dashboard mappings are not certified by
-  the plugin verifier.
+  the plugin verifier, with one exception below.
+- **Meta Audience Network (bidding)** is the one adapter with reviewed pins:
+  `advertising.admob.mediation.meta` in `plugins-manifest.json`. When a game
+  declares it, the verifier checks the pins, the synced Gradle line and the
+  settings below; a commented-out adapter wakes no checks.
+  - Android: `implementation "com.google.ads.mediation:facebook:<androidAdapter>"`
+    in `moduleGradleDependencies` (it requires the pinned `play-services-ads`).
+    Audience Network caches video through a local proxy, so add
+    `android:networkSecurityConfig="@xml/network_security_config"` to
+    `<application>` with a `domain-config` allowing cleartext to `127.0.0.1`
+    only. Leave `base-config` at its default.
+  - iOS: `pod 'GoogleMobileAdsMediationFacebook', '<iosAdapter>'` in
+    `target 'App'`, then `pod install`. Both `skAdNetworkIds` must be in
+    `SKAdNetworkItems`.
+  - No code: the adapter starts with the Google Mobile Ads SDK. Meta's
+    Advertiser Tracking Enabled flag is not set. Audience Network SDK 6.15+ reads
+    the ATT status itself on iOS 17+. On iOS 15–16 Meta treats requests as not
+    tracked, an accepted limit: the flag would have to precede the SDK start,
+    which runs before the consent and ATT flow.
+  - Consent: Meta is not on the IAB vendor list. It is reached through Google's
+    Additional Consent, so keep Meta in the AdMob GDPR ad partner list. The
+    per-game AdMob work (Meta placements, ad unit mappings, the bidding source in
+    each mediation group) stays a dashboard task.
 - Copy `template/scripts/patch-native-ad-events.mjs`, `verify-admob.mjs`,
   `admob-files.json`, `patch-yandex-sdk.mjs` and the adjacent `patches/` directory together. Merge its invocation into `postinstall` and
   `prebuild`, retaining existing hooks. The runner needs Git and the game root:

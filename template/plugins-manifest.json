@@ -96,7 +96,17 @@
   "advertising": {
     "admob": {
       "androidSdkVersion": "25.5.0",
-      "iosSdkVersion": "13.11.0"
+      "iosSdkVersion": "13.11.0",
+      "mediation": {
+        "meta": {
+          "androidAdapter": "6.22.1.0",
+          "iosAdapter": "6.22.1.0",
+          "skAdNetworkIds": [
+            "v9wttpbfk9.skadnetwork",
+            "n38lu8286q.skadnetwork"
+          ]
+        }
+      }
     },
     "cas": {
       "dependencies": {

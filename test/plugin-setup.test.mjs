@@ -275,6 +275,78 @@ test('AdMob SDK pins reject stale or floating Android versions and stale iOS pod
   assert.ok(app.verify().errors.some(error => error.includes('Google-Mobile-Ads-SDK must resolve')));
 });
 
+// A game declares the Meta Audience Network adapter the way gym and gym2 do:
+// the Gradle line owned by build.config.mjs and copied into the generated file,
+// the pod in target 'App', and the localhost cleartext exception for its cache.
+function metaMediationFixture(t, { androidVersion, iosVersion, securityConfig } = {}) {
+  const meta = manifest.advertising.admob.mediation.meta;
+  const app = fixture(t);
+  const line = `implementation "com.google.ads.mediation:facebook:${androidVersion ?? meta.androidAdapter}"`;
+  app.write('scripts/build.config.mjs', `export const BUILD_CONFIG = { android: { moduleGradleDependencies: { lines: ['${line}'] } } };\n`);
+  app.append('android/app/capacitor.build.gradle', `\n${line}\n`);
+  app.write('android/app/src/main/AndroidManifest.xml',
+    '<manifest><application android:networkSecurityConfig="@xml/network_security_config"/></manifest>');
+  app.write('android/app/src/main/res/xml/network_security_config.xml', securityConfig
+    ?? '<network-security-config><domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="true">127.0.0.1</domain></domain-config></network-security-config>');
+  app.append('ios/App/Podfile', `\npod 'GoogleMobileAdsMediationFacebook', '${meta.iosAdapter}'\n`);
+  for (const file of ['ios/App/Podfile.lock', 'ios/App/Pods/Manifest.lock']) {
+    app.append(file, `  - GoogleMobileAdsMediationFacebook (${iosVersion ?? meta.iosAdapter}):\n`);
+  }
+  app.write('ios/App/App/Info.plist', { SKAdNetworkItems: meta.skAdNetworkIds.map((id) => ({ SKAdNetworkIdentifier: id.toUpperCase() })) });
+  return app;
+}
+
+test('Meta mediation adapter passes when pinned, synced, cached and listed for SKAdNetwork', (t) => {
+  assert.deepEqual(metaMediationFixture(t).verify().errors, []);
+});
+
+test('Meta mediation adapter rejects stale pins on either platform', (t) => {
+  const android = metaMediationFixture(t, { androidVersion: '6.22.0.1' }).verify().errors;
+  assert.ok(android.some((error) => error.includes('scripts/build.config.mjs must pin')));
+  assert.ok(android.some((error) => error.includes('capacitor.build.gradle must pin')));
+  const ios = metaMediationFixture(t, { iosVersion: '6.21.1.1' }).verify().errors;
+  assert.ok(ios.some((error) => error.includes('GoogleMobileAdsMediationFacebook must resolve')));
+  const app = metaMediationFixture(t);
+  const podfile = fs.readFileSync(path.join(app.directory, 'ios/App/Podfile'), 'utf8');
+  app.write('ios/App/Podfile', podfile.replace(/(GoogleMobileAdsMediationFacebook')[^\n]*/, '$1'));
+  assert.ok(app.verify().errors.some((error) => error.includes('pin GoogleMobileAdsMediationFacebook')));
+});
+
+test('Meta mediation adapter declared in build config but lost from the generated Gradle file fails', (t) => {
+  const app = metaMediationFixture(t);
+  const generated = fs.readFileSync(path.join(app.directory, 'android/app/capacitor.build.gradle'), 'utf8');
+  app.write('android/app/capacitor.build.gradle', generated.replace(/.*mediation:facebook.*\n/, ''));
+  assert.ok(app.verify().errors.some((error) => error.includes('run cap:sync:android')));
+});
+
+test('Meta mediation adapter needs the localhost cleartext exception and nothing wider', (t) => {
+  const missing = metaMediationFixture(t);
+  missing.write('android/app/src/main/AndroidManifest.xml', '<manifest><application/></manifest>');
+  assert.ok(missing.verify().errors.some((error) => error.includes('cleartext to 127.0.0.1')));
+  const wrongHost = metaMediationFixture(t, {
+    securityConfig: '<network-security-config><domain-config cleartextTrafficPermitted="true"><domain>example.com</domain></domain-config></network-security-config>',
+  });
+  assert.ok(wrongHost.verify().errors.some((error) => error.includes('cleartext to 127.0.0.1')));
+  const wide = metaMediationFixture(t, {
+    securityConfig: '<network-security-config><base-config cleartextTrafficPermitted="true"/><domain-config cleartextTrafficPermitted="true"><domain>127.0.0.1</domain></domain-config></network-security-config>',
+  });
+  assert.ok(wide.verify().errors.some((error) => error.includes('not in base-config')));
+});
+
+test('Meta mediation adapter requires both Meta SKAdNetwork identifiers', (t) => {
+  const app = metaMediationFixture(t);
+  app.write('ios/App/App/Info.plist', { SKAdNetworkItems: [{ SKAdNetworkIdentifier: manifest.advertising.admob.mediation.meta.skAdNetworkIds[0] }] });
+  const errors = app.verify().errors;
+  assert.ok(errors.some((error) => error.includes(manifest.advertising.admob.mediation.meta.skAdNetworkIds[1])));
+});
+
+test('a commented-out Meta adapter wakes no Meta mediation checks', (t) => {
+  const app = fixture(t);
+  app.append('android/app/capacitor.build.gradle', '\n// implementation "com.google.ads.mediation:facebook:6.0.0.0"\n');
+  app.append('ios/App/Podfile', "\n# pod 'GoogleMobileAdsMediationFacebook'\n");
+  assert.deepEqual(app.verify().errors, []);
+});
+
 test('weak SwiftUICore linking may be a string, the all-architecture setting, or both', (t) => {
   for (const settings of [
     { OTHER_LDFLAGS: '-ObjC -weak_framework SwiftUICore' },
