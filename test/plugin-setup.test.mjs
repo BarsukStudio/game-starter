@@ -362,6 +362,32 @@ test('a Gradle variable as the Meta adapter version still wakes the checks and f
   assert.ok(errors.some((error) => error.includes('cleartext to 127.0.0.1')));
 });
 
+test('single-quoted base-config cleartext is still rejected', (t) => {
+  const app = metaMediationFixture(t, {
+    securityConfig: "<network-security-config><base-config cleartextTrafficPermitted='true'/><domain-config cleartextTrafficPermitted='true'><domain>127.0.0.1</domain></domain-config></network-security-config>",
+  });
+  assert.ok(app.verify().errors.some((error) => error.includes('or in base-config')));
+});
+
+test('a concatenated Meta adapter version still wakes the checks and fails the pin', (t) => {
+  const app = metaMediationFixture(t);
+  const file = 'android/app/capacitor.build.gradle';
+  const source = fs.readFileSync(path.join(app.directory, file), 'utf8');
+  app.write(file, source.replace(/implementation "com\.google\.ads\.mediation:facebook:[\d.]+"/,
+    'implementation("com.google.ads.mediation:facebook:" + metaAdapterVersion)'));
+  assert.ok(app.verify().errors.some((error) => error.includes('found no literal version')));
+});
+
+test('a Meta pod after a nested end inside capacitor_pods still fails', (t) => {
+  const app = metaMediationFixture(t);
+  const pin = manifest.advertising.admob.mediation.meta.iosAdapter;
+  const podfile = fs.readFileSync(path.join(app.directory, 'ios/App/Podfile'), 'utf8')
+    .replace(`pod 'GoogleMobileAdsMediationFacebook', '${pin}'`, '');
+  app.write('ios/App/Podfile', podfile.replace(`platform :ios, '${manifest.ios.deploymentTarget}'\n`,
+    `platform :ios, '${manifest.ios.deploymentTarget}'\ndef capacitor_pods\n  if true\n    pod 'Capacitor'\n  end\n  pod 'GoogleMobileAdsMediationFacebook', '${pin}'\nend\n`));
+  assert.ok(app.verify().errors.some((error) => error.includes('outside def capacitor_pods')));
+});
+
 test('a Meta pod inside the regenerated capacitor_pods block fails', (t) => {
   const app = metaMediationFixture(t);
   const pin = manifest.advertising.admob.mediation.meta.iosAdapter;

@@ -413,9 +413,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     // line kept in build.config.mjs but lost from the generated Gradle file after a
     // plain `cap sync` would otherwise drop the adapter without a word.
     const buildConfig = fs.existsSync(path.join(root, 'scripts/build.config.mjs')) ? code(read('scripts/build.config.mjs')) : '';
-    // Any version token counts as a declaration, so a Gradle variable still wakes
-    // the checks and then fails the literal pin instead of skipping them.
-    const metaAdapter = /com\.google\.ads\.mediation:facebook:([^"'\s)]+)/g;
+    // The coordinate alone counts as a declaration, so a Gradle variable or a
+    // concatenated version still wakes the checks and then fails the literal pin.
+    const metaAdapter = /com\.google\.ads\.mediation:facebook(?![\w.-])(?::([^"'\s)]+))?/g;
     const metaDeclarations = [
       ['scripts/build.config.mjs', buildConfig],
       ['android/app/capacitor.build.gradle', generated],
@@ -424,7 +424,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     if (metaDeclarations.length) {
       const pin = manifest.advertising.admob.mediation.meta.androidAdapter;
       for (const [file, version] of metaDeclarations) {
-        check(version === pin, `Meta mediation Android: ${file} must pin com.google.ads.mediation:facebook:${pin}, found ${version}.`);
+        check(version === pin, `Meta mediation Android: ${file} must pin com.google.ads.mediation:facebook:${pin}, found ${version ?? 'no literal version'}.`);
       }
       check(!buildConfig.match(metaAdapter) || Boolean(generated.match(metaAdapter)),
         'Meta mediation Android: the adapter declared in scripts/build.config.mjs is missing from capacitor.build.gradle; run cap:sync:android.');
@@ -439,9 +439,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       const domainConfigs = [...securityConfig.matchAll(/<domain-config\b[^>]*>/g)].map(([tag]) => tag);
       const domains = [...securityConfig.matchAll(/<domain\b[^>]*>\s*([^<\s]+)\s*<\/domain>/g)].map((match) => match[1]);
       check(Boolean(configName) && domainConfigs.length > 0 && domains.includes('127.0.0.1')
-        && domainConfigs.every((tag) => /cleartextTrafficPermitted\s*=\s*"true"/.test(tag)),
+        && domainConfigs.every((tag) => /cleartextTrafficPermitted\s*=\s*["']true["']/.test(tag)),
         'Meta mediation Android: <application> needs android:networkSecurityConfig allowing cleartext to 127.0.0.1 for the Audience Network media cache.');
-      check(domains.every((domain) => domain === '127.0.0.1') && !/<base-config\b[^>]*cleartextTrafficPermitted\s*=\s*"true"/.test(securityConfig),
+      check(domains.every((domain) => domain === '127.0.0.1') && !/<base-config\b[^>]*cleartextTrafficPermitted\s*=\s*["']true["']/.test(securityConfig),
         'Meta mediation Android: the network security config may allow cleartext only to 127.0.0.1, not to other domains or in base-config.');
     }
   }
@@ -589,8 +589,9 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     if (/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(podfile)) {
       const meta = manifest.advertising.admob.mediation.meta;
       // `cap sync ios` rewrites the body of capacitor_pods, so a pod placed there
-      // vanishes on the next sync, and with it every check below.
-      const ownPods = podfile.replace(/^\s*def\s+capacitor_pods\b[\s\S]*?^\s*end\b/m, '');
+      // vanishes on the next sync, and with it every check below. The block is
+      // cut exactly as Capacitor cuts it: up to the first unindented `end`.
+      const ownPods = podfile.replace(/def capacitor_pods[\s\S]+?\nend/, '');
       check(/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(ownPods),
         "Meta mediation iOS: declare GoogleMobileAdsMediationFacebook in target 'App', outside def capacitor_pods.");
       check(new RegExp(`^\\s*pod\\s+['"]GoogleMobileAdsMediationFacebook['"]\\s*,\\s*['"]${escape(meta.iosAdapter)}['"]`, 'm').test(podfile),
