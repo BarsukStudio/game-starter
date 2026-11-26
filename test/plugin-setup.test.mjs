@@ -276,6 +276,15 @@ test('AdMob SDK pins reject stale or floating Android versions and stale iOS pod
   assert.ok(app.verify().errors.some(error => error.includes('Google-Mobile-Ads-SDK must resolve')));
 });
 
+test('the WebView Native UI Engine pod inside the regenerated capacitor_pods block fails', (t) => {
+  const app = fixture(t);
+  const enginePod = "pod 'WebViewNativeUIEngine', :path => '../../node_modules/@webview-native-ui/engine'";
+  const podfile = fs.readFileSync(path.join(app.directory, 'ios/App/Podfile'), 'utf8').replace(`\n${enginePod}`, '');
+  app.write('ios/App/Podfile', podfile.replace(`platform :ios, '${manifest.ios.deploymentTarget}'\n`,
+    `platform :ios, '${manifest.ios.deploymentTarget}'\ndef capacitor_pods\n  ${enginePod}\nend\n`));
+  assert.ok(app.verify().errors.some((error) => error.includes('WebViewNativeUIEngine must resolve')));
+});
+
 // A game declares the Meta Audience Network adapter the way gym and gym2 do:
 // the Gradle line owned by build.config.mjs and copied into the generated file,
 // the pod in target 'App', and the localhost cleartext exception for its cache.

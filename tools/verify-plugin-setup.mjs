@@ -448,6 +448,10 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
 
   if (targets.includes('ios')) {
     const podfile = code(read('ios/App/Podfile'));
+    // `cap sync ios` rewrites the body of capacitor_pods, so a pod placed there
+    // vanishes on the next sync, and with it every check that found it. The block
+    // is cut exactly as Capacitor cuts it: up to the first unindented `end`.
+    const ownPods = podfile.replace(/def capacitor_pods[\s\S]+?\nend/, '');
     const podLock = read('ios/App/Podfile.lock');
     if (!cas) {
       const version = manifest.advertising.admob.iosSdkVersion;
@@ -455,8 +459,8 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         `iOS: Google-Mobile-Ads-SDK must resolve to ${version}.`);
       const engineVersion = manifest.ios.dependencies['@webview-native-ui/engine'];
       const enginePod = /^\s*pod\s+['"]WebViewNativeUIEngine['"],\s*:path\s*=>\s*['"][^'"]*node_modules\/@webview-native-ui\/engine['"]/m;
-      check(enginePod.test(podfile) && new RegExp(`^  - WebViewNativeUIEngine \\(${escape(engineVersion)}\\)`, 'm').test(podLock),
-        `iOS: WebViewNativeUIEngine must resolve to the local npm package at ${engineVersion}.`);
+      check(enginePod.test(ownPods) && new RegExp(`^  - WebViewNativeUIEngine \\(${escape(engineVersion)}\\)`, 'm').test(podLock),
+        `iOS: WebViewNativeUIEngine must resolve to the local npm package at ${engineVersion}, declared outside def capacitor_pods.`);
     }
     check(podLock === read('ios/App/Pods/Manifest.lock'), 'iOS: Pods are out of sync with Podfile.lock.');
     check(new RegExp(`platform\\s*:ios,\\s*['"]${escape(manifest.ios.deploymentTarget)}['"]`).test(podfile), `iOS: Podfile deployment target must be ${manifest.ios.deploymentTarget}.`);
@@ -593,10 +597,6 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     }
     if (/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(podfile)) {
       const meta = manifest.advertising.admob.mediation.meta;
-      // `cap sync ios` rewrites the body of capacitor_pods, so a pod placed there
-      // vanishes on the next sync, and with it every check below. The block is
-      // cut exactly as Capacitor cuts it: up to the first unindented `end`.
-      const ownPods = podfile.replace(/def capacitor_pods[\s\S]+?\nend/, '');
       check(/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(ownPods),
         "Meta mediation iOS: declare GoogleMobileAdsMediationFacebook in target 'App', outside def capacitor_pods.");
       check(new RegExp(`^\\s*pod\\s+['"]GoogleMobileAdsMediationFacebook['"]\\s*,\\s*['"]${escape(meta.iosAdapter)}['"]`, 'm').test(podfile),
