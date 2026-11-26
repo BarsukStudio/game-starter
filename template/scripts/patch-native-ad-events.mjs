@@ -25,3 +25,14 @@ if (apply(['--reverse', '--check']).status === 0) {
   const result = apply([]);
   if (result.status !== 0) throw new Error(`Yandex patch failed: ${result.stderr}`);
 }
+
+// iOS sticky banner width from the safe area, applied on top of the request-identity patch.
+const widthPatch = fileURLToPath(new URL('./patches/yandex-ios-safe-banner-width.patch', import.meta.url));
+const applyWidth = (args) => spawnSync('git', ['apply', ...args, widthPatch], { encoding: 'utf8' });
+if (applyWidth(['--reverse', '--check']).status !== 0) {
+  if (process.argv.includes('--check')) throw new Error('Yandex iOS banner width patch missing or drifted. Run postinstall.');
+  const check = applyWidth(['--check']);
+  if (check.status !== 0) throw new Error(`Yandex iOS banner width patch does not match installed plugin: ${check.stderr}`);
+  const result = applyWidth([]);
+  if (result.status !== 0) throw new Error(`Yandex iOS banner width patch failed: ${result.stderr}`);
+}

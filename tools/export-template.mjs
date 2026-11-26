@@ -13,6 +13,7 @@ export const CAS_EXCLUDED_FILES = Object.freeze([
   'platform/meta-app-events.js',
   'scripts/admob-files.json', 'scripts/verify-admob.mjs',
   'scripts/patch-native-ad-events.mjs', 'scripts/patches/native-ad-request-ids.patch',
+  'scripts/patches/yandex-ios-safe-banner-width.patch',
   'scripts/ad-revenue-test.mjs', 'scripts/ad-revenue-wiring-check.mjs',
   'native/android/ConsentSignalsPlugin.java', 'native/ios/ConsentSignalsPlugin.swift',
 ]);

@@ -1,0 +1,15 @@
+diff --git a/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift b/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift
+--- a/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift
++++ b/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift
+@@ -126,7 +126,10 @@ public class YandexAdsPlugin: CAPPlugin, CAPBridgedPlugin {
+         destroyBannerAd()
+         bannerAdUnitID = adUnitID
+         bannerLoadCall = call
+-        let width = max(viewController.view.bounds.width, 1)
++        // Fit the sticky banner between the side safe-area insets (Dynamic Island,
++        // rounded corners) like Android; fall back to the full view while the guide is empty.
++        let safeWidth = viewController.view.safeAreaLayoutGuide.layoutFrame.width
++        let width = max(safeWidth > 0 ? safeWidth : viewController.view.bounds.width, 1)
+         let bannerSize = BannerAdSize.sticky(containerWidth: width)
+         let banner = BannerAdView(adSize: bannerSize)
+         banner.delegate = self

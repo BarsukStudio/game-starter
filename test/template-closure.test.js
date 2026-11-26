@@ -36,6 +36,17 @@ test('the native patch asset ships beside its runner', () => {
 
 });
 
+test('the iOS banner width patch ships beside its runner and touches only the Yandex Swift bridge', () => {
+  const runner = fs.readFileSync(path.join(templateRoot, 'scripts/patch-native-ad-events.mjs'), 'utf8');
+  assert.ok(runner.includes("new URL('./patches/yandex-ios-safe-banner-width.patch', import.meta.url)"));
+  const patch = fs.readFileSync(path.join(templateRoot, 'scripts/patches/yandex-ios-safe-banner-width.patch'), 'utf8');
+  assert.deepEqual(patch.match(/^--- a\/.*$/gm),
+    ['--- a/node_modules/capacitor-plugin-yandex-ads/ios/Sources/YandexAdsPlugin/YandexAdsPlugin.swift']);
+  assert.match(patch, /^\+.*safeAreaLayoutGuide\.layoutFrame\.width$/m);
+  // An empty guide must fall back to the full view, never to a 1-point banner.
+  assert.match(patch, /^\+.*safeWidth > 0 \? safeWidth : viewController\.view\.bounds\.width/m);
+});
+
 // Node builtins are not prerequisites: every consuming game already has them,
 // and listing them would turn the declaration into an inventory of Node.
 const isBuiltin = (specifier) => specifier.startsWith('node:');

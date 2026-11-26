@@ -142,6 +142,9 @@ existing blocks; never overwrite an entire native file with a snippet.
   Yandex keeps its native banner alive after load/refresh errors; its SDK alone
   owns recovery, with no copied JS retry timers. The reproducible Yandex patch
   includes this fix and stale callback protection alongside request identities.
+  A second, iOS-only patch (`patches/yandex-ios-safe-banner-width.patch`) sizes the
+  sticky banner from the safe-area width, so in landscape it sits between the side
+  insets instead of under the Dynamic Island; an empty guide falls back to the full view.
 
   The pinned Yandex bridge also receives the reviewed iOS SDK pin through
   `patch-yandex-sdk.mjs`; its source podspec is maintained in the plugin repository.
