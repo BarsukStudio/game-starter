@@ -150,11 +150,18 @@ existing blocks; never overwrite an entire native file with a snippet.
   `patch-yandex-sdk.mjs`; its source podspec is maintained in the plugin repository.
   Keep this file alongside the patch runner, including in native sync preflights.
 
-  AdMob 8.2 fixes iOS revenue micros and preserves native load-error codes.
-  The current baseline uses the official AdMob 8.2.1 package. SDK targets live
+  The baseline uses the official AdMob package. SDK targets live
   in `advertising.admob` in the plugin manifest: pin Android's
   `playServicesAdsVersion` in `android/variables.gradle`; the iOS SDK is pinned
-  by the plugin podspec. After updating the package, update the selected iOS pod
+  by the plugin podspec. For CocoaPods, install the WebView Native UI Engine
+  package from `ios.dependencies` and add its local pod inside `target 'App'`,
+  outside the generated `capacitor_pods` block:
+
+  ```ruby
+  pod 'WebViewNativeUIEngine', :path => '../../node_modules/@webview-native-ui/engine'
+  ```
+
+  After updating the package, update the selected iOS pod
   with CocoaPods and retain `Podfile.lock`. Refresh the hash manifest from the
   integrity-verified npm archive plus the existing approved patches. The plugin
   verifier rejects a floating/stale Android SDK pin and a stale iOS SDK lock.
@@ -274,7 +281,8 @@ handlers. Keep the real controller under test; do not replace it with a stub.
    pod 'CapacitorFirebaseAnalytics/Analytics', :path => '../../node_modules/@capacitor-firebase/analytics'
    ```
 
-   The reference `Podfile.lock` resolves Firebase Crashlytics to
+   Resolve Firebase Core to `diagnostics.iosCoreVersion` with CocoaPods and
+   keep the result in `Podfile.lock`. The reference resolves Firebase Crashlytics to
    `diagnostics.iosSdkVersion`. For reproducible fresh installation, pin that
    native pod to that value in `target 'App'`, outside `capacitor_pods`.
    Keep `Podfile.lock`; review dependency drift instead of blindly updating pods.

@@ -61,9 +61,10 @@ implementation "com.google.firebase:firebase-crashlytics-ndk:$firebaseCrashlytic
   write('android/app/src/main/assets/capacitor.plugins.json', Object.keys(plugins).map((pkg) => ({ pkg })));
   write('android/app/src/main/AndroidManifest.xml', '<manifest><application/></manifest>');
   write('android/app/google-services.json', { project_info: { project_id: 'test' }, client: [{ client_info: { mobilesdk_app_id: '1:1:android:test', android_client_info: { package_name: 'test.example' } } }] });
-  write('ios/App/Podfile', `platform :ios, '${manifest.ios.deploymentTarget}'\n${Object.values(plugins).map(([pod]) => `pod '${pod}'`).join('\n')}`);
+  write('ios/App/Podfile', `platform :ios, '${manifest.ios.deploymentTarget}'\n${Object.values(plugins).map(([pod]) => `pod '${pod}'`).join('\n')}\npod 'WebViewNativeUIEngine', :path => '../../node_modules/@webview-native-ui/engine'`);
   const lock = Object.entries(plugins).map(([name, [pod]]) => `  - ${pod} (${entries[`node_modules/${name}`].version}):`).join('\n')
-    + `\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n`
+    + `\n  - FirebaseCore (${manifest.diagnostics.iosCoreVersion}):\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n`
+    + `  - WebViewNativeUIEngine (${manifest.ios.dependencies['@webview-native-ui/engine']})\n`
     + `  - Google-Mobile-Ads-SDK (${manifest.advertising.admob.iosSdkVersion})\n`;
   write('ios/App/Podfile.lock', lock);
   write('ios/App/Pods/Manifest.lock', lock);
@@ -170,7 +171,7 @@ platform :ios, '${manifest.ios.deploymentTarget}'
 ${Object.values(plugins).map(([pod]) => `pod '${pod}'`).join('\n')}
 pod 'CleverAdsSolutions-SDK/Optimal', '${manifest.advertising.cas.sdkVersion}'`);
   const podLock = `  - CleverAdsSolutions-Base (${manifest.advertising.cas.sdkVersion}):\n` + Object.entries(plugins).map(([name, [pod]]) => `  - ${pod} (${lock.packages[`node_modules/${name}`].version}):`).join('\n')
-    + `\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n`;
+    + `\n  - FirebaseCore (${manifest.diagnostics.iosCoreVersion}):\n  - FirebaseCrashlytics (${manifest.diagnostics.iosSdkVersion}):\n`;
   app.write('ios/App/Podfile.lock', podLock); app.write('ios/App/Pods/Manifest.lock', podLock);
   app.write('ios/App/App/capacitor.config.json', { packageClassList: Object.values(plugins).map(([, name]) => name) });
   app.write('src/js/platform/bridge.js', "import './ads/native-cas.js';");
@@ -238,7 +239,7 @@ test('CAS rejects mixed stacks, SDK drift and collector drift', (t) => {
   app.write('ios/App/Podfile', "pod 'CleverAdsSolutions-SDK/Optimal', '0.0.0'");
   app.write('src/js/platform/ads/ad-revenue.js', '// lost collector');
   const errors = app.verify().errors.join('\n');
-  for (const expected of ['legacy plugin', 'gradle-plugin:4.8.0', 'CAS iOS', 'collector differs']) assert.ok(errors.includes(expected), errors);
+  for (const expected of ['legacy plugin', `gradle-plugin:${manifest.advertising.cas.sdkVersion}`, 'CAS iOS', 'collector differs']) assert.ok(errors.includes(expected), errors);
 });
 
 for (const pin of manifest.acceptedPins['@barsuk/game-runtime']) {

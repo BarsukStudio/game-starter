@@ -453,6 +453,10 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       const version = manifest.advertising.admob.iosSdkVersion;
       check(new RegExp(`^  - Google-Mobile-Ads-SDK \\(${escape(version)}\\)`, 'm').test(podLock),
         `iOS: Google-Mobile-Ads-SDK must resolve to ${version}.`);
+      const engineVersion = manifest.ios.dependencies['@webview-native-ui/engine'];
+      const enginePod = /^\s*pod\s+['"]WebViewNativeUIEngine['"],\s*:path\s*=>\s*['"][^'"]*node_modules\/@webview-native-ui\/engine['"]/m;
+      check(enginePod.test(podfile) && new RegExp(`^  - WebViewNativeUIEngine \\(${escape(engineVersion)}\\)`, 'm').test(podLock),
+        `iOS: WebViewNativeUIEngine must resolve to the local npm package at ${engineVersion}.`);
     }
     check(podLock === read('ios/App/Pods/Manifest.lock'), 'iOS: Pods are out of sync with Podfile.lock.');
     check(new RegExp(`platform\\s*:ios,\\s*['"]${escape(manifest.ios.deploymentTarget)}['"]`).test(podfile), `iOS: Podfile deployment target must be ${manifest.ios.deploymentTarget}.`);
@@ -574,6 +578,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         return ref?.path === 'GoogleService-Info.plist';
       })), 'iOS: GoogleService-Info.plist must be in App Copy Bundle Resources.');
       check(new RegExp(`^  - FirebaseCrashlytics \\(${escape(manifest.diagnostics.iosSdkVersion)}\\)`, 'm').test(podLock), `iOS: FirebaseCrashlytics must resolve to ${manifest.diagnostics.iosSdkVersion}.`);
+      check(new RegExp(`^  - FirebaseCore \\(${escape(manifest.diagnostics.iosCoreVersion)}\\)`, 'm').test(podLock), `iOS: FirebaseCore must resolve to ${manifest.diagnostics.iosCoreVersion}.`);
       const info = plist('ios/App/App/Info.plist');
       check(info.FirebaseCrashlyticsCollectionEnabled !== false, 'iOS: Info.plist disables diagnostic collection.');
       check(settings.length > 0 && settings.every((config) => config.DEBUG_INFORMATION_FORMAT === 'dwarf-with-dsym'), 'iOS: every App configuration must generate DWARF with dSYM.');
