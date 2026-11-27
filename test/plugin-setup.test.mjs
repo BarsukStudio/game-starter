@@ -276,6 +276,90 @@ test('AdMob SDK pins reject stale or floating Android versions and stale iOS pod
   assert.ok(app.verify().errors.some(error => error.includes('Google-Mobile-Ads-SDK must resolve')));
 });
 
+// The same game after `cap spm-migration-assistant`: no Podfile, the generated
+// CapApp-SPM package linked to App, remote packages pinned in App.xcodeproj and
+// resolved into the committed Package.resolved, Crashlytics run from SourcePackages.
+const spmResolved = 'ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved';
+function spmFixture(t, { pins = {}, metaAdapter } = {}) {
+  const app = fixture(t);
+  for (const file of ['ios/App/Podfile', 'ios/App/Podfile.lock', 'ios/App/Pods']) app.remove(file);
+  const pods = ['CapacitorApp', 'CapacitorSplashScreen', 'CapacitorCommunityAdmob', 'CapacitorPluginYandexAds', 'CapacitorPluginCdvPurchase',
+    'CapacitorFirebaseAnalytics', 'CapacitorFirebaseApp', 'CapacitorFirebaseCrashlytics'];
+  app.write('ios/App/CapApp-SPM/Package.swift', `let package = Package(\n    name: "CapApp-SPM",\n    platforms: [.iOS(.v${manifest.ios.deploymentTarget.split('.')[0]})],\n`
+    + `    targets: [.target(name: "CapApp-SPM", dependencies: [\n${pods.map((pod) => `        .product(name: "${pod}", package: "${pod}")`).join(',\n')}\n    ])]\n)\n`);
+  const resolved = {
+    'swift-package-manager-google-mobile-ads': manifest.advertising.admob.iosSdkVersion,
+    engine: manifest.ios.dependencies['@webview-native-ui/engine'],
+    'firebase-ios-sdk': manifest.diagnostics.iosSpmVersion,
+    ...(metaAdapter ? { 'googleads-mobile-ios-mediation-meta': metaAdapter } : {}),
+    ...pins,
+  };
+  app.write(spmResolved, { version: 3, pins: Object.entries(resolved).map(([identity, version]) => ({ identity, state: { version } })) });
+  const { objects } = app.project;
+  objects.capApp = { isa: 'XCLocalSwiftPackageReference', relativePath: 'CapApp-SPM' };
+  objects.capAppProduct = { isa: 'XCSwiftPackageProductDependency', package: 'capApp', productName: 'CapApp-SPM' };
+  objects.capAppFile = { isa: 'PBXBuildFile', productRef: 'capAppProduct' };
+  objects.frameworks = { isa: 'PBXFrameworksBuildPhase', files: ['capAppFile'] };
+  objects.app.packageProductDependencies = ['capAppProduct'];
+  objects.app.buildPhases = ['frameworks', ...objects.app.buildPhases];
+  if (metaAdapter) {
+    objects.metaPackage = { isa: 'XCRemoteSwiftPackageReference', repositoryURL: 'https://github.com/googleads/googleads-mobile-ios-mediation-meta',
+      requirement: { kind: 'exactVersion', version: metaAdapter } };
+    objects.metaProduct = { isa: 'XCSwiftPackageProductDependency', package: 'metaPackage', productName: 'MetaAdapterTarget' };
+    objects.metaFile = { isa: 'PBXBuildFile', productRef: 'metaProduct' };
+    objects.frameworks.files.push('metaFile');
+    objects.app.packageProductDependencies.push('metaProduct');
+    app.write('ios/App/App/Info.plist', { SKAdNetworkItems: manifest.advertising.admob.mediation.meta.skAdNetworkIds.map((id) => ({ SKAdNetworkIdentifier: id })) });
+  }
+  objects.crashlytics.shellScript = '"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run"';
+  const write = () => app.write('ios/App/App.xcodeproj/project.pbxproj', app.project);
+  write();
+  return { ...app, objects, save: write };
+}
+
+test('a Swift Package Manager project passes without a Podfile', (t) => {
+  assert.deepEqual(spmFixture(t).verify().errors, []);
+});
+
+test('a Swift Package Manager project needs CapApp-SPM linked to App', (t) => {
+  const app = spmFixture(t);
+  app.objects.frameworks.files = [];
+  app.save();
+  assert.ok(app.verify().errors.some((error) => error.includes('link the CapApp-SPM package product')));
+});
+
+test('a Swift Package Manager project needs every plugin in the generated package', (t) => {
+  const app = spmFixture(t);
+  const file = path.join(app.directory, 'ios/App/CapApp-SPM/Package.swift');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/\s*\.product\(name: "CapacitorPluginYandexAds"[^)]*\),?/, ''));
+  assert.ok(app.verify().errors.some((error) => error.includes('CapacitorPluginYandexAds missing from CapApp-SPM/Package.swift')));
+});
+
+test('a Swift Package Manager project rejects drifted SDK resolutions', (t) => {
+  const errors = spmFixture(t, { pins: { 'swift-package-manager-google-mobile-ads': '13.6.0', 'firebase-ios-sdk': '12.20.0', engine: '1.0.10' } }).verify().errors;
+  for (const expected of ['Google-Mobile-Ads-SDK must resolve', 'firebase-ios-sdk must resolve', 'WebViewNativeUIEngine must resolve']) {
+    assert.ok(errors.some((error) => error.includes(expected)), expected);
+  }
+});
+
+test('a Swift Package Manager project rejects the CocoaPods Crashlytics path', (t) => {
+  const app = spmFixture(t);
+  app.objects.crashlytics.shellScript = '"${PODS_ROOT}/FirebaseCrashlytics/run"';
+  app.save();
+  assert.ok(app.verify().errors.some((error) => error.includes('must run FirebaseCrashlytics/run')));
+});
+
+test('the Meta mediation package must be pinned exactly and linked to App', (t) => {
+  const meta = manifest.advertising.admob.mediation.meta;
+  assert.deepEqual(spmFixture(t, { metaAdapter: meta.iosSpmAdapter }).verify().errors, []);
+  const drifted = spmFixture(t, { metaAdapter: '6.22.000' }).verify().errors;
+  assert.ok(drifted.some((error) => error.includes(`exactly ${meta.iosSpmAdapter}`)));
+  const unlinked = spmFixture(t, { metaAdapter: meta.iosSpmAdapter });
+  unlinked.objects.frameworks.files = ['capAppFile'];
+  unlinked.save();
+  assert.ok(unlinked.verify().errors.some((error) => error.includes('link MetaAdapterTarget')));
+});
+
 test('the WebView Native UI Engine pod inside the regenerated capacitor_pods block fails', (t) => {
   const app = fixture(t);
   const enginePod = "pod 'WebViewNativeUIEngine', :path => '../../node_modules/@webview-native-ui/engine'";

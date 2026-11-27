@@ -166,6 +166,24 @@ existing blocks; never overwrite an entire native file with a snippet.
   integrity-verified npm archive plus the existing approved patches. The plugin
   verifier rejects a floating/stale Android SDK pin and a stale iOS SDK lock.
   Revenue remains divided by 1,000,000; do not compensate iOS values a second time.
+
+- Swift Package Manager instead of CocoaPods (CocoaPods trunk takes no new
+  versions from 2026-12-02). `npx cap spm-migration-assistant` removes the Pods
+  and creates `ios/App/CapApp-SPM` and `ios/debug.xcconfig`; then, in
+  `App.xcodeproj`: link the local `CapApp-SPM` product to target `App`, set
+  `debug.xcconfig` on the Debug configuration, add the game's mediation adapters
+  (`googleads-mobile-ios-mediation-*`, exact tags) and `firebase-ios-sdk` at
+  `diagnostics.iosSpmVersion` (exact) with the products `AppDelegate` imports,
+  and point the Crashlytics phase at
+  `"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run"`.
+  `cap sync ios` regenerates `CapApp-SPM/Package.swift`, so nothing is added there
+  by hand. When two plugins share a folder name (`@capacitor/app` and
+  `@capacitor-firebase/app`), set
+  `experimental.ios.spm.packageOptions["@capacitor-firebase/app"].symlink` in
+  `capacitor.config.json` and ignore `CapApp-SPM/symlinks`. Commit
+  `App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`; the
+  verifier reads SDK versions from it and checks the package links. CAS games stay
+  on CocoaPods.
   Native initialization can reject while the Android parent view is unavailable;
   retain lifecycle recovery and the independent game/store startup.
 

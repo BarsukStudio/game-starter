@@ -29,6 +29,8 @@ const metaPlugin = ['CapgoCapacitorFacebookAnalytics', 'FacebookAnalyticsPlugin'
 // removal is not a leftover. This is source evidence: a built artifact can still
 // carry the SDK through a path no listed file declares.
 const performancePackage = '@capacitor-firebase/performance';
+// Where Xcode keeps the SwiftPM lock of App.xcodeproj; it is committed with the project.
+const spmResolvedFile = 'ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved';
 const dsymInputs = [
   '${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}',
   '${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}',
@@ -447,34 +449,62 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
   }
 
   if (targets.includes('ios')) {
-    const podfile = code(read('ios/App/Podfile'));
+    // Capacitor picks the iOS package manager the same way: a CapApp-SPM folder
+    // means Swift Package Manager, otherwise CocoaPods.
+    const spm = fs.existsSync(path.join(root, 'ios/App/CapApp-SPM'));
+    check(!(spm && cas), 'CAS iOS: the CAS SDK ships through its CocoaPods spec repository; keep CAS games on CocoaPods.');
+    const podfile = spm ? '' : code(read('ios/App/Podfile'));
     // `cap sync ios` rewrites the body of capacitor_pods, so a pod placed there
     // vanishes on the next sync, and with it every check that found it. The block
     // is cut exactly as Capacitor cuts it: up to the first unindented `end`.
     const ownPods = podfile.replace(/def capacitor_pods[\s\S]+?\nend/, '');
-    const podLock = read('ios/App/Podfile.lock');
+    const podLock = spm ? '' : read('ios/App/Podfile.lock');
+    // `cap sync ios` regenerates CapApp-SPM/Package.swift from the npm plugins;
+    // packages beyond them live in App.xcodeproj and resolve into Package.resolved.
+    const spmManifest = spm ? code(read('ios/App/CapApp-SPM/Package.swift')) : '';
+    const spmPins = spm ? Object.fromEntries((json(spmResolvedFile).pins ?? []).map((pin) => [pin.identity, pin.state?.version])) : {};
+    // One question for both managers: did this native dependency resolve to the pin?
+    const resolves = (pod, identity, version, spmVersion = version) => (spm
+      ? spmPins[identity] === spmVersion
+      : new RegExp(`^  - ${escape(pod)} \\(${escape(version)}\\)`, 'm').test(podLock));
     if (!cas) {
       const version = manifest.advertising.admob.iosSdkVersion;
-      check(new RegExp(`^  - Google-Mobile-Ads-SDK \\(${escape(version)}\\)`, 'm').test(podLock),
+      check(resolves('Google-Mobile-Ads-SDK', 'swift-package-manager-google-mobile-ads', version),
         `iOS: Google-Mobile-Ads-SDK must resolve to ${version}.`);
       const engineVersion = manifest.ios.dependencies['@webview-native-ui/engine'];
+      // SwiftPM takes the Engine from the AdMob package manifest; CocoaPods needs the local pod.
       const enginePod = /^\s*pod\s+['"]WebViewNativeUIEngine['"],\s*:path\s*=>\s*['"][^'"]*node_modules\/@webview-native-ui\/engine['"]/m;
-      check(enginePod.test(ownPods) && new RegExp(`^  - WebViewNativeUIEngine \\(${escape(engineVersion)}\\)`, 'm').test(podLock),
-        `iOS: WebViewNativeUIEngine must resolve to the local npm package at ${engineVersion}, declared outside def capacitor_pods.`);
+      check((spm || enginePod.test(ownPods)) && resolves('WebViewNativeUIEngine', 'engine', engineVersion),
+        `iOS: WebViewNativeUIEngine must resolve to ${engineVersion}${spm ? '' : ' from the local npm package, declared outside def capacitor_pods'}.`);
     }
-    check(podLock === read('ios/App/Pods/Manifest.lock'), 'iOS: Pods are out of sync with Podfile.lock.');
-    check(new RegExp(`platform\\s*:ios,\\s*['"]${escape(manifest.ios.deploymentTarget)}['"]`).test(podfile), `iOS: Podfile deployment target must be ${manifest.ios.deploymentTarget}.`);
+    if (spm) {
+      check(new RegExp(`platforms:\\s*\\[\\.iOS\\(\\.v${escape(manifest.ios.deploymentTarget.split('.')[0])}\\)\\]`).test(spmManifest),
+        `iOS: CapApp-SPM deployment target must be ${manifest.ios.deploymentTarget}; sync iOS.`);
+    } else {
+      check(podLock === read('ios/App/Pods/Manifest.lock'), 'iOS: Pods are out of sync with Podfile.lock.');
+      check(new RegExp(`platform\\s*:ios,\\s*['"]${escape(manifest.ios.deploymentTarget)}['"]`).test(podfile), `iOS: Podfile deployment target must be ${manifest.ios.deploymentTarget}.`);
+    }
     const registry = json('ios/App/App/capacitor.config.json');
     performanceLeftovers([
-      ['ios/App/Podfile', podfile, /pod\s+['"](?:Capacitor)?FirebasePerformance\b[^'"]*/],
-      ['ios/App/Podfile.lock', podLock, /^ {2}- (?:Capacitor)?FirebasePerformance\b.*/m],
+      ...(spm ? [
+        ['ios/App/CapApp-SPM/Package.swift', spmManifest, /CapacitorFirebasePerformance\b/],
+        ['ios/App/App.xcodeproj/project.pbxproj', read('ios/App/App.xcodeproj/project.pbxproj'), /productName = "?FirebasePerformance"?;/],
+      ] : [
+        ['ios/App/Podfile', podfile, /pod\s+['"](?:Capacitor)?FirebasePerformance\b[^'"]*/],
+        ['ios/App/Podfile.lock', podLock, /^ {2}- (?:Capacitor)?FirebasePerformance\b.*/m],
+      ]),
       ['ios/App/App/capacitor.config.json', (registry.packageClassList ?? []).join('\n'), /^FirebasePerformancePlugin$/m],
       ['ios/App/App/Info.plist', Object.keys(plist('ios/App/App/Info.plist')).join('\n'), /^firebase_performance_\w+$/m],
     ]);
     for (const [name, [pod, className]] of Object.entries(plugins)) {
-      check(new RegExp(`^\\s*pod\\s+['"]${pod}['"]`, 'm').test(podfile), `iOS: ${pod} missing from Podfile.`);
-      const expectedVersion = json(`node_modules/${name}/package.json`).version;
-      check(new RegExp(`^  - ${pod} \\(${escape(expectedVersion)}\\)`, 'm').test(podLock), `iOS: ${pod} missing or stale in Podfile.lock.`);
+      if (spm) {
+        // The generated package points at node_modules, whose version the npm checks above pin.
+        check(new RegExp(`\\.product\\(name:\\s*"${escape(pod)}"`).test(spmManifest), `iOS: ${pod} missing from CapApp-SPM/Package.swift; sync iOS.`);
+      } else {
+        check(new RegExp(`^\\s*pod\\s+['"]${pod}['"]`, 'm').test(podfile), `iOS: ${pod} missing from Podfile.`);
+        const expectedVersion = json(`node_modules/${name}/package.json`).version;
+        check(new RegExp(`^  - ${pod} \\(${escape(expectedVersion)}\\)`, 'm').test(podLock), `iOS: ${pod} missing or stale in Podfile.lock.`);
+      }
       check(registry.packageClassList?.includes(className), `iOS: ${className} missing from generated Capacitor registration; sync iOS.`);
     }
     if (cas) {
@@ -496,7 +526,21 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     const objects = project.objects ?? {};
     const app = Object.values(objects).find((object) => object.isa === 'PBXNativeTarget' && object.name === 'App');
     const projectObject = objects[project.rootObject];
-    check(Boolean(app), 'iOS: expected the CocoaPods App target in project.pbxproj.');
+    check(Boolean(app), 'iOS: expected the App target in project.pbxproj.');
+    // A package product links only when App lists it and its Frameworks phase carries it.
+    const frameworkFiles = (app?.buildPhases ?? []).map((id) => objects[id]).filter((phase) => phase?.isa === 'PBXFrameworksBuildPhase')
+      .flatMap((phase) => phase.files ?? []).map((id) => objects[id]);
+    const linksProduct = (productName, packageMatches) => (app?.packageProductDependencies ?? []).some((id) => {
+      const dependency = objects[id];
+      return dependency?.productName === productName && packageMatches(objects[dependency.package])
+        && frameworkFiles.some((file) => file?.productRef === id);
+    });
+    const remotePackage = (repository) => Object.values(objects).find((object) => object.isa === 'XCRemoteSwiftPackageReference'
+      && String(object.repositoryURL ?? '').replace(/\.git$/, '').endsWith(`/${repository}`));
+    if (spm) {
+      check(linksProduct('CapApp-SPM', (pkg) => pkg?.isa === 'XCLocalSwiftPackageReference' && pkg.relativePath === 'CapApp-SPM'),
+        "iOS: link the CapApp-SPM package product to target 'App' (Frameworks).");
+    }
     const projectConfigs = objects[projectObject?.buildConfigurationList]?.buildConfigurations ?? [];
     const appConfigs = objects[app?.buildConfigurationList]?.buildConfigurations ?? [];
     check(appConfigs.length > 0, 'iOS: App build configurations are missing.');
@@ -567,8 +611,8 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       // The template starts the SDK itself after consent; an AppDelegate start would bypass that.
       check(!/\bApplicationDelegate\.shared\b/.test(code(read('ios/App/App/AppDelegate.swift'))),
         'Meta iOS: AppDelegate must not initialize the Meta SDK.');
-      check(new RegExp(`^  - FBSDKCoreKit \\(${escape(manifest.metaAppEvents.iosSdkVersion)}\\)`, 'm').test(podLock),
-        `Meta iOS: FBSDKCoreKit must resolve to ${manifest.metaAppEvents.iosSdkVersion}.`);
+      check(resolves('FBSDKCoreKit', 'facebook-ios-sdk', manifest.metaAppEvents.iosSdkVersion, manifest.metaAppEvents.iosSpmVersion),
+        `Meta iOS: FBSDKCoreKit must resolve to ${spm ? manifest.metaAppEvents.iosSpmVersion ?? 'a reviewed SwiftPM pin (metaAppEvents.iosSpmVersion is not set)' : manifest.metaAppEvents.iosSdkVersion}.`);
     }
 
     if (diagnostics) {
@@ -581,13 +625,19 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         const ref = objects[objects[id]?.fileRef];
         return ref?.path === 'GoogleService-Info.plist';
       })), 'iOS: GoogleService-Info.plist must be in App Copy Bundle Resources.');
-      check(new RegExp(`^  - FirebaseCrashlytics \\(${escape(manifest.diagnostics.iosSdkVersion)}\\)`, 'm').test(podLock), `iOS: FirebaseCrashlytics must resolve to ${manifest.diagnostics.iosSdkVersion}.`);
-      check(new RegExp(`^  - FirebaseCore \\(${escape(manifest.diagnostics.iosCoreVersion)}\\)`, 'm').test(podLock), `iOS: FirebaseCore must resolve to ${manifest.diagnostics.iosCoreVersion}.`);
+      if (spm) {
+        // SwiftPM takes Core and Crashlytics from one firebase-ios-sdk release.
+        check(spmPins['firebase-ios-sdk'] === manifest.diagnostics.iosSpmVersion, `iOS: firebase-ios-sdk must resolve to ${manifest.diagnostics.iosSpmVersion}.`);
+      } else {
+        check(resolves('FirebaseCrashlytics', '', manifest.diagnostics.iosSdkVersion), `iOS: FirebaseCrashlytics must resolve to ${manifest.diagnostics.iosSdkVersion}.`);
+        check(resolves('FirebaseCore', '', manifest.diagnostics.iosCoreVersion), `iOS: FirebaseCore must resolve to ${manifest.diagnostics.iosCoreVersion}.`);
+      }
       const info = plist('ios/App/App/Info.plist');
       check(info.FirebaseCrashlyticsCollectionEnabled !== false, 'iOS: Info.plist disables diagnostic collection.');
       check(settings.length > 0 && settings.every((config) => config.DEBUG_INFORMATION_FORMAT === 'dwarf-with-dsym'), 'iOS: every App configuration must generate DWARF with dSYM.');
       const phase = phases.at(-1);
-      check(phase?.isa === 'PBXShellScriptBuildPhase' && code(phase.shellScript ?? '').includes('"${PODS_ROOT}/FirebaseCrashlytics/run"')
+      const crashlyticsRun = spm ? '"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run"' : '"${PODS_ROOT}/FirebaseCrashlytics/run"';
+      check(phase?.isa === 'PBXShellScriptBuildPhase' && code(phase.shellScript ?? '').includes(crashlyticsRun)
         && Number(phase.runOnlyForDeploymentPostprocessing ?? 0) === 0, 'iOS: the final App build phase must run FirebaseCrashlytics/run for normal builds.');
       const inputs = (phase?.inputPaths ?? []).map(normalizePath);
       for (const input of dsymInputs) check(inputs.includes(input), `iOS: Crashlytics input missing: ${input}`);
@@ -595,14 +645,24 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
         check(inputs.includes('${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}.debug.dylib'), 'iOS: sandboxed debug dylib builds require the debug dylib dSYM input.');
       }
     }
-    if (/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(podfile)) {
+    const metaMediationPackage = spm && remotePackage('googleads-mobile-ios-mediation-meta');
+    if (metaMediationPackage) {
       const meta = manifest.advertising.admob.mediation.meta;
-      check(/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(ownPods),
-        "Meta mediation iOS: declare GoogleMobileAdsMediationFacebook in target 'App', outside def capacitor_pods.");
-      check(new RegExp(`^\\s*pod\\s+['"]GoogleMobileAdsMediationFacebook['"]\\s*,\\s*['"]${escape(meta.iosAdapter)}['"]`, 'm').test(podfile),
-        `Meta mediation iOS: pin GoogleMobileAdsMediationFacebook ${meta.iosAdapter} in the Podfile.`);
-      check(new RegExp(`^  - GoogleMobileAdsMediationFacebook \\(${escape(meta.iosAdapter)}\\)`, 'm').test(podLock),
-        `Meta mediation iOS: GoogleMobileAdsMediationFacebook must resolve to ${meta.iosAdapter}.`);
+      check(metaMediationPackage.requirement?.kind === 'exactVersion' && metaMediationPackage.requirement?.version === meta.iosSpmAdapter
+        && spmPins['googleads-mobile-ios-mediation-meta'] === meta.iosSpmAdapter,
+        `Meta mediation iOS: pin googleads-mobile-ios-mediation-meta to exactly ${meta.iosSpmAdapter} in App.xcodeproj.`);
+      check(linksProduct('MetaAdapterTarget', (pkg) => pkg === metaMediationPackage), "Meta mediation iOS: link MetaAdapterTarget to target 'App'.");
+    }
+    if (metaMediationPackage || /^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(podfile)) {
+      const meta = manifest.advertising.admob.mediation.meta;
+      if (!spm) {
+        check(/^\s*pod\s+['"]GoogleMobileAdsMediationFacebook['"]/m.test(ownPods),
+          "Meta mediation iOS: declare GoogleMobileAdsMediationFacebook in target 'App', outside def capacitor_pods.");
+        check(new RegExp(`^\\s*pod\\s+['"]GoogleMobileAdsMediationFacebook['"]\\s*,\\s*['"]${escape(meta.iosAdapter)}['"]`, 'm').test(podfile),
+          `Meta mediation iOS: pin GoogleMobileAdsMediationFacebook ${meta.iosAdapter} in the Podfile.`);
+        check(resolves('GoogleMobileAdsMediationFacebook', '', meta.iosAdapter),
+          `Meta mediation iOS: GoogleMobileAdsMediationFacebook must resolve to ${meta.iosAdapter}.`);
+      }
       const items = plist('ios/App/App/Info.plist').SKAdNetworkItems;
       const declared = new Set((Array.isArray(items) ? items : []).map((item) => String(item?.SKAdNetworkIdentifier ?? '').toLowerCase()));
       for (const id of meta.skAdNetworkIds) {

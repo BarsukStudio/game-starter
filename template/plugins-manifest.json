@@ -60,7 +60,8 @@
       "firebaseCrashlyticsVersion": "21.1.0"
     },
     "iosSdkVersion": "12.19.0",
-    "iosCoreVersion": "12.19.3"
+    "iosCoreVersion": "12.19.3",
+    "iosSpmVersion": "12.19.3"
   },
   "metaAppEvents": {
     "dependencies": {
@@ -103,6 +104,7 @@
         "meta": {
           "androidAdapter": "6.22.1.0",
           "iosAdapter": "6.22.1.0",
+        "iosSpmAdapter": "6.22.100",
           "skAdNetworkIds": [
             "v9wttpbfk9.skadnetwork",
             "n38lu8286q.skadnetwork"
