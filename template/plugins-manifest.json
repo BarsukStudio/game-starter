@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "baselineDate": "2026-11-26",
+  "baselineDate": "2026-11-27",
   "evidence": "Reviewed source/dependency baseline. Native builds, device behavior, Firebase console and store acceptance are consumer-owned checks.",
   "platform": {
     "dependencies": {
@@ -11,7 +11,7 @@
       "@capacitor-firebase/analytics": "8.6.0",
       "@capacitor-community/admob": "8.4.2",
       "capacitor-plugin-yandex-ads": "https://github.com/BarsukStudio/capacitor-plugin-yandex-ads/archive/86d30e7000a57dd8c406900f8325d0a82f0c5700.tar.gz",
-      "capacitor-plugin-cdv-purchase": "13.18.0"
+      "capacitor-plugin-cdv-purchase": "13.20.0"
     },
     "devDependencies": {
       "vite": "8.4.0"
@@ -79,8 +79,8 @@
       "integrity": "sha512-z2ZC0eId15iq3MMwkqoYnRitRYs51Yng990SuMih5xx/3wzG2hOGjRodaydRZRt6DywgzMH9aiSpRVoBN8miYg=="
     },
     "capacitor-plugin-cdv-purchase": {
-      "version": "13.18.0-barsuk.1",
-      "integrity": "sha512-tEbE85kc33ZSS3BzdAg0F5NY7S9AjcgOG/SQ0RrPRtfJ851KeByAeIFRkvJliil3C9g0OM6q2s9ey0ZH/p+uGA=="
+      "version": "13.20.0-barsuk.1",
+      "integrity": "sha512-j3QEd2ex15sC9P1eLtWaY2MiDz+lomPNjMZ/GJpIpSEqJGLUMYJi6df3NKMXU+rukLeoV28we2BzvUvjRo9Ibg=="
     }
   },
   "acceptedPins": {
@@ -92,7 +92,7 @@
       "https://github.com/BarsukStudio/game-runtime/archive/69012e9fefdea477e01cb0ccc4fd53205d2c1b34.tar.gz"
     ],
     "capacitor-plugin-cdv-purchase": [
-      "file:vendor/capacitor-plugin-cdv-purchase-13.18.0-barsuk.1.tgz"
+      "file:vendor/capacitor-plugin-cdv-purchase-13.20.0-barsuk.1.tgz"
     ]
   },
   "advertising": {

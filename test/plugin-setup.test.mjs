@@ -456,10 +456,10 @@ for (const mismatch of ['integrity', 'version']) {
     const name = 'capacitor-plugin-cdv-purchase';
     const app = fixture(t, { purchasePin: manifest.acceptedPins[name][0] });
     const lock = app.read('package-lock.json');
-    lock.packages[`node_modules/${name}`][mismatch] = mismatch === 'integrity' ? 'sha512-unreviewed' : '13.18.0';
+    lock.packages[`node_modules/${name}`][mismatch] = mismatch === 'integrity' ? 'sha512-unreviewed' : manifest.platform.dependencies[name];
     app.write('package-lock.json', lock);
     app.write('node_modules/.package-lock.json', lock);
-    if (mismatch === 'version') app.write(`node_modules/${name}/package.json`, { name, version: '13.18.0' });
+    if (mismatch === 'version') app.write(`node_modules/${name}/package.json`, { name, version: manifest.platform.dependencies[name] });
     assert.ok(app.verify().errors.some(error => error.includes(`${name}: local candidate archive must match the reviewed integrity and version.`)));
   });
 }
