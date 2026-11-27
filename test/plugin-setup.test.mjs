@@ -350,10 +350,13 @@ test('a Swift Package Manager project rejects the CocoaPods Crashlytics path', (
 });
 
 test('Meta App Events on Swift Package Manager needs its own reviewed pin', (t) => {
-  const app = spmFixture(t, { pins: { 'facebook-ios-sdk': manifest.metaAppEvents.iosSdkVersion } });
-  const errors = verifyPluginSetup({ root: app.directory, targets: ['ios'], diagnostics: true, meta: true, run: (command, args, options) => command === 'plutil'
-    ? { status: 0, stdout: fs.readFileSync(args.at(-1), 'utf8') } : spawnSync(command, args, options) }).errors;
-  assert.ok(errors.some((error) => error.includes('FBSDKCoreKit must resolve to')), errors.join('\n'));
+  // Neither the pod's version in the lock nor an absent pin may stand in for the reviewed one.
+  for (const pins of [{ 'facebook-ios-sdk': manifest.metaAppEvents.iosSdkVersion }, {}]) {
+    const app = spmFixture(t, { pins });
+    const errors = verifyPluginSetup({ root: app.directory, targets: ['ios'], diagnostics: true, meta: true, run: (command, args, options) => command === 'plutil'
+      ? { status: 0, stdout: fs.readFileSync(args.at(-1), 'utf8') } : spawnSync(command, args, options) }).errors;
+    assert.ok(errors.some((error) => error.includes('FBSDKCoreKit must resolve to')), errors.join('\n'));
+  }
 });
 
 test('the Meta mediation package must be pinned exactly and linked to App', (t) => {

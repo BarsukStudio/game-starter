@@ -466,7 +466,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     // One question for both managers: did this native dependency resolve to the pin?
     // Each manager has its own pin; a missing SwiftPM pin fails rather than borrowing the pod's.
     const resolves = (pod, identity, version, spmVersion) => (spm
-      ? spmPins[identity] === spmVersion
+      ? Boolean(spmVersion) && spmPins[identity] === spmVersion
       : new RegExp(`^  - ${escape(pod)} \\(${escape(version)}\\)`, 'm').test(podLock));
     if (!cas) {
       const version = manifest.advertising.admob.iosSdkVersion;
@@ -628,7 +628,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
       })), 'iOS: GoogleService-Info.plist must be in App Copy Bundle Resources.');
       if (spm) {
         // SwiftPM takes Core and Crashlytics from one firebase-ios-sdk release.
-        check(spmPins['firebase-ios-sdk'] === manifest.diagnostics.iosSpmVersion, `iOS: firebase-ios-sdk must resolve to ${manifest.diagnostics.iosSpmVersion}.`);
+        check(Boolean(manifest.diagnostics.iosSpmVersion) && spmPins['firebase-ios-sdk'] === manifest.diagnostics.iosSpmVersion, `iOS: firebase-ios-sdk must resolve to ${manifest.diagnostics.iosSpmVersion}.`);
       } else {
         check(resolves('FirebaseCrashlytics', '', manifest.diagnostics.iosSdkVersion), `iOS: FirebaseCrashlytics must resolve to ${manifest.diagnostics.iosSdkVersion}.`);
         check(resolves('FirebaseCore', '', manifest.diagnostics.iosCoreVersion), `iOS: FirebaseCore must resolve to ${manifest.diagnostics.iosCoreVersion}.`);
@@ -649,7 +649,7 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     const metaMediationPackage = spm && remotePackage('googleads-mobile-ios-mediation-meta');
     if (metaMediationPackage) {
       const meta = manifest.advertising.admob.mediation.meta;
-      check(metaMediationPackage.requirement?.kind === 'exactVersion' && metaMediationPackage.requirement?.version === meta.iosSpmAdapter
+      check(Boolean(meta.iosSpmAdapter) && metaMediationPackage.requirement?.kind === 'exactVersion' && metaMediationPackage.requirement?.version === meta.iosSpmAdapter
         && spmPins['googleads-mobile-ios-mediation-meta'] === meta.iosSpmAdapter,
         `Meta mediation iOS: pin googleads-mobile-ios-mediation-meta to exactly ${meta.iosSpmAdapter} in App.xcodeproj.`);
       check(linksProduct('MetaAdapterTarget', (pkg) => pkg === metaMediationPackage), "Meta mediation iOS: link MetaAdapterTarget to target 'App'.");
