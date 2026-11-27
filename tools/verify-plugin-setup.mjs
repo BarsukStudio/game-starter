@@ -464,17 +464,18 @@ export function verifyPluginSetup({ root, targets, diagnostics = false, consent 
     const spmManifest = spm ? code(read('ios/App/CapApp-SPM/Package.swift')) : '';
     const spmPins = spm ? Object.fromEntries((json(spmResolvedFile).pins ?? []).map((pin) => [pin.identity, pin.state?.version])) : {};
     // One question for both managers: did this native dependency resolve to the pin?
-    const resolves = (pod, identity, version, spmVersion = version) => (spm
+    // Each manager has its own pin; a missing SwiftPM pin fails rather than borrowing the pod's.
+    const resolves = (pod, identity, version, spmVersion) => (spm
       ? spmPins[identity] === spmVersion
       : new RegExp(`^  - ${escape(pod)} \\(${escape(version)}\\)`, 'm').test(podLock));
     if (!cas) {
       const version = manifest.advertising.admob.iosSdkVersion;
-      check(resolves('Google-Mobile-Ads-SDK', 'swift-package-manager-google-mobile-ads', version),
+      check(resolves('Google-Mobile-Ads-SDK', 'swift-package-manager-google-mobile-ads', version, version),
         `iOS: Google-Mobile-Ads-SDK must resolve to ${version}.`);
       const engineVersion = manifest.ios.dependencies['@webview-native-ui/engine'];
       // SwiftPM takes the Engine from the AdMob package manifest; CocoaPods needs the local pod.
       const enginePod = /^\s*pod\s+['"]WebViewNativeUIEngine['"],\s*:path\s*=>\s*['"][^'"]*node_modules\/@webview-native-ui\/engine['"]/m;
-      check((spm || enginePod.test(ownPods)) && resolves('WebViewNativeUIEngine', 'engine', engineVersion),
+      check((spm || enginePod.test(ownPods)) && resolves('WebViewNativeUIEngine', 'engine', engineVersion, engineVersion),
         `iOS: WebViewNativeUIEngine must resolve to ${engineVersion}${spm ? '' : ' from the local npm package, declared outside def capacitor_pods'}.`);
     }
     if (spm) {

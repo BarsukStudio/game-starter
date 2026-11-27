@@ -349,6 +349,13 @@ test('a Swift Package Manager project rejects the CocoaPods Crashlytics path', (
   assert.ok(app.verify().errors.some((error) => error.includes('must run FirebaseCrashlytics/run')));
 });
 
+test('Meta App Events on Swift Package Manager needs its own reviewed pin', (t) => {
+  const app = spmFixture(t, { pins: { 'facebook-ios-sdk': manifest.metaAppEvents.iosSdkVersion } });
+  const errors = verifyPluginSetup({ root: app.directory, targets: ['ios'], diagnostics: true, meta: true, run: (command, args, options) => command === 'plutil'
+    ? { status: 0, stdout: fs.readFileSync(args.at(-1), 'utf8') } : spawnSync(command, args, options) }).errors;
+  assert.ok(errors.some((error) => error.includes('FBSDKCoreKit must resolve to')), errors.join('\n'));
+});
+
 test('the Meta mediation package must be pinned exactly and linked to App', (t) => {
   const meta = manifest.advertising.admob.mediation.meta;
   assert.deepEqual(spmFixture(t, { metaAdapter: meta.iosSpmAdapter }).verify().errors, []);
